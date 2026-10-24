@@ -50,6 +50,7 @@
         <div class="drawer-actions-grid">
           <button id="btnAspect" class="drawer-action-btn" type="button">Aspect: 16:9</button>
           <button id="btnCrt" class="drawer-action-btn" type="button">CRT Scanlines</button>
+          <button id="btnFps" class="drawer-action-btn active" type="button">FPS: On</button>
           <button id="btnFullscreen" class="drawer-action-btn" type="button">Fullscreen</button>
           <button id="btnCustomRom" class="drawer-action-btn" type="button">Load Disc (.bin)</button>
           <input type="file" id="fileInput" accept=".bin,.cue,.iso,.chd" style="display: none;">
@@ -161,6 +162,12 @@
   <main id="viewportCard" class="game-viewport-card viewport-aspect-16-9">
     <canvas id="canvas" width="1280" height="720" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
     <canvas id="displayCanvas" width="1280" height="720" tabindex="1" oncontextmenu="event.preventDefault()"></canvas>
+
+    <!-- Realtime HUD FPS Badge (Top-Right) -->
+    <div id="fpsBadge" class="fps-badge active">
+      <span id="fpsVal" class="fps-val">--</span>
+      <span class="fps-unit">FPS</span>
+    </div>
 
     <div id="crtOverlay" class="crt-overlay"></div>
 

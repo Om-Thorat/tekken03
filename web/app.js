@@ -16,6 +16,9 @@
   const btnCrt = document.getElementById('btnCrt');
   const btnAspect = document.getElementById('btnAspect');
   const btnFullscreen = document.getElementById('btnFullscreen');
+  const btnFps = document.getElementById('btnFps');
+  const fpsBadge = document.getElementById('fpsBadge');
+  const fpsVal = document.getElementById('fpsVal');
   const volumeSlider = document.getElementById('volumeSlider');
   const viewportCard = document.getElementById('viewportCard');
   const gamepadStatus = document.getElementById('gamepadStatus');
@@ -24,6 +27,7 @@
   let wasmInstance = null;
   let isRunning = false;
   let isWide = true;
+  let showFps = true;
 
   function remoteLog(type, msg) {
     try {
@@ -266,9 +270,23 @@
     frameCount++;
     fpsFrames++;
     const now = performance.now();
-    if (now - lastFpsTime >= 1000) {
-      const currentFps = ((fpsFrames * 1000) / (now - lastFpsTime)).toFixed(1);
-      remoteLog('FPS_STATS', `FPS: ${currentFps} | Frame: #${frameCount} | Res: ${w}x${h} | Mode: ${gl ? 'WebGL-HW' : 'Canvas2D'}`);
+    if (now - lastFpsTime >= 500) {
+      const currentFps = (fpsFrames * 1000) / (now - lastFpsTime);
+      const formatted = currentFps.toFixed(1);
+
+      if (fpsVal) {
+        fpsVal.textContent = formatted;
+      }
+      if (fpsBadge) {
+        let qualityClass = 'fps-good';
+        if (currentFps < 45) {
+          qualityClass = 'fps-low';
+        } else if (currentFps < 57) {
+          qualityClass = 'fps-mid';
+        }
+        fpsBadge.className = `fps-badge ${qualityClass}${showFps ? ' active' : ''}`;
+      }
+
       fpsFrames = 0;
       lastFpsTime = now;
     }
@@ -660,6 +678,17 @@
     crtOverlay.classList.toggle('enabled');
     btnCrt.classList.toggle('active');
   });
+
+  if (btnFps) {
+    btnFps.addEventListener('click', () => {
+      showFps = !showFps;
+      btnFps.textContent = showFps ? 'FPS: On' : 'FPS: Off';
+      btnFps.classList.toggle('active', showFps);
+      if (fpsBadge) {
+        fpsBadge.classList.toggle('active', showFps);
+      }
+    });
+  }
 
   btnAspect.addEventListener('click', () => {
     isWide = !isWide;

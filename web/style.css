@@ -140,6 +140,72 @@ html, body {
 }
 
 /* ==========================================================================
+   Realtime HUD FPS Badge (Top-Right)
+   ========================================================================== */
+
+.fps-badge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 5px 11px;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 25;
+  pointer-events: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.5px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  user-select: none;
+}
+
+.fps-badge.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.fps-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: #00ff88;
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.35);
+  font-variant-numeric: tabular-nums;
+}
+
+.fps-unit {
+  font-size: 10px;
+  font-weight: 600;
+  color: #888888;
+  letter-spacing: 1px;
+}
+
+.fps-badge.fps-good .fps-val {
+  color: #00ff88;
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.35);
+}
+
+.fps-badge.fps-mid .fps-val {
+  color: #ffcc00;
+  text-shadow: 0 0 10px rgba(255, 204, 0, 0.35);
+}
+
+.fps-badge.fps-low .fps-val {
+  color: #ff3344;
+  text-shadow: 0 0 10px rgba(255, 51, 68, 0.35);
+}
+
+/* ==========================================================================
    Arcade Boot & Launcher Overlay
    ========================================================================== */
 
