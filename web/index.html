@@ -13,7 +13,7 @@
 <body>
 
   <!-- Floating Menu Trigger (Top-Left) -->
-  <button id="drawerToggle" class="floating-drawer-toggle" type="button" title="Menu & Controls (Tab / Esc)">
+  <button id="drawerToggle" class="floating-drawer-toggle active" type="button" title="Menu & Controls (Tab / Esc)">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <line x1="3" y1="12" x2="21" y2="12"></line>
       <line x1="3" y1="6" x2="21" y2="6"></line>
@@ -23,12 +23,12 @@
   </button>
 
   <!-- Backdrop overlay when drawer is open -->
-  <div id="drawerBackdrop" class="drawer-backdrop"></div>
+  <div id="drawerBackdrop" class="drawer-backdrop open"></div>
 
-  <!-- Collapsible Left Drawer -->
-  <aside id="sidebarDrawer" class="sidebar-drawer">
+  <!-- Collapsible Left Drawer (Open by default) -->
+  <aside id="sidebarDrawer" class="sidebar-drawer open">
     <div class="drawer-header">
-      <img src="tekken_logo.jpg" alt="Tekken 3" class="drawer-logo">
+      <img src="tekken_logo.png" alt="Tekken 3" class="drawer-logo">
       <button id="drawerClose" class="drawer-close-btn" type="button" title="Close (Esc)">✕</button>
     </div>
 
@@ -166,11 +166,11 @@
 
     <!-- Clean Authentic Boot Screen -->
     <div id="bootOverlay" class="boot-overlay">
-      <img src="tekken_logo.jpg" alt="Tekken 3" class="boot-logo">
+      <img src="tekken_logo.png" alt="Tekken 3" class="boot-logo">
 
       <div class="boot-actions">
-        <button id="btnStart" class="btn-primary" type="button">
-          Insert Coin & Play
+        <button id="btnStart" class="btn-outline" type="button">
+          Play
         </button>
       </div>
 

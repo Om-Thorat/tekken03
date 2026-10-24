@@ -452,6 +452,7 @@
 
   // Event Listeners
   btnStart.addEventListener('click', () => {
+    closeDrawer();
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (AudioCtx) {
