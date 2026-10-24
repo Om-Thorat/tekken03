@@ -199,12 +199,24 @@
   }
 
 
+  let cachedU8 = null;
+  let cachedU8Buf = null;
+  let cachedU8Offset = 0;
+  let cachedU8Len = 0;
+
   window.tekkenDrawFrame = function (heapU32, ptr, w, h) {
     if (!w || !h || !heapU32 || !displayCanvas) return;
 
     if (gl) {
       // GPU DIRECT PATH: Zero CPU loop, zero GC, BGR->RGB swizzle in hardware shader (<0.15ms)
-      const u8 = new Uint8Array(heapU32.buffer, ptr, w * h * 4);
+      const byteLen = w * h * 4;
+      if (!cachedU8 || cachedU8Buf !== heapU32.buffer || cachedU8Offset !== ptr || cachedU8Len !== byteLen) {
+        cachedU8 = new Uint8Array(heapU32.buffer, ptr, byteLen);
+        cachedU8Buf = heapU32.buffer;
+        cachedU8Offset = ptr;
+        cachedU8Len = byteLen;
+      }
+      const u8 = cachedU8;
 
       gl.bindTexture(gl.TEXTURE_2D, glTex);
       if (glTexW !== w || glTexH !== h) {
