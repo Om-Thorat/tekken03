@@ -198,6 +198,25 @@
     }, false);
   }
 
+  if (displayCanvas && canvas) {
+    const forwardKey = (e) => {
+      // Don't forward if user is interacting with form controls
+      if (e.target && e.target.tagName === 'INPUT') return;
+      // Do not capture Tab or Escape (handled for drawer)
+      if (e.key === 'Tab' || e.key === 'Escape') return;
+      canvas.dispatchEvent(new KeyboardEvent(e.type, {
+        key: e.key,
+        code: e.code,
+        keyCode: e.keyCode,
+        which: e.which,
+        bubbles: true,
+        cancelable: true
+      }));
+    };
+    window.addEventListener('keydown', forwardKey);
+    window.addEventListener('keyup', forwardKey);
+  }
+
   window.tekkenDrawFrame = function (heapU32, ptr, w, h) {
     if (!w || !h || !heapU32 || !displayCanvas) return;
 
