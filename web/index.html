@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Tekken 3 Recompiled | Web Port</title>
-  <meta name="description" content="Tekken 3 static recompilation running in modern web browsers via WebAssembly and WebGL. 60 FPS fighting game arcade port.">
+  <title>Tekken 3</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;500;600;700&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
@@ -12,9 +12,9 @@
 </head>
 <body>
 
-  <!-- Floating Drawer Trigger (Top-Left) -->
+  <!-- Floating Menu Trigger (Top-Left) -->
   <button id="drawerToggle" class="floating-drawer-toggle" type="button" title="Menu & Controls (Tab / Esc)">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <line x1="3" y1="12" x2="21" y2="12"></line>
       <line x1="3" y1="6" x2="21" y2="6"></line>
       <line x1="3" y1="18" x2="21" y2="18"></line>
@@ -28,33 +28,25 @@
   <!-- Collapsible Left Drawer -->
   <aside id="sidebarDrawer" class="sidebar-drawer">
     <div class="drawer-header">
-      <div class="drawer-brand">
-        <h2 class="drawer-title">TEKKEN 3</h2>
-        <span class="drawer-badge">Web Edition</span>
-      </div>
-      <button id="drawerClose" class="drawer-close-btn" type="button" title="Close Drawer (Esc)">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
+      <img src="tekken_logo.jpg" alt="Tekken 3" class="drawer-logo">
+      <button id="drawerClose" class="drawer-close-btn" type="button" title="Close (Esc)">✕</button>
     </div>
 
     <div class="drawer-content">
-      <!-- Status Badge -->
+      <!-- Status Indicator -->
       <div class="drawer-status-card">
         <div class="status-indicator">
           <span class="status-dot"></span>
           <span id="wasmStatus">Engine: Standby</span>
         </div>
         <div class="status-indicator">
-          <span id="gamepadStatus">🎮 Auto-Controller Ready</span>
+          <span id="gamepadStatus">🎮 Keyboard Active</span>
         </div>
       </div>
 
-      <!-- Quick Actions / Display Settings -->
+      <!-- Settings -->
       <div class="drawer-section">
-        <div class="section-title">⚙️ Display & Audio</div>
+        <div class="section-title">Settings</div>
         <div class="drawer-actions-grid">
           <button id="btnAspect" class="drawer-action-btn" type="button">Aspect: 16:9</button>
           <button id="btnCrt" class="drawer-action-btn" type="button">CRT Scanlines</button>
@@ -64,33 +56,33 @@
         </div>
 
         <div class="volume-box">
-          <span class="volume-label">🔊 Master Volume</span>
+          <span class="volume-label">🔊 Volume</span>
           <input id="volumeSlider" class="volume-slider" type="range" min="0" max="1" step="0.05" value="0.8">
         </div>
       </div>
 
-      <!-- Controls Guide: Player 1 -->
+      <!-- Controls: Player 1 -->
       <div class="drawer-section">
-        <div class="section-title">🕹️ Player 1 Controls</div>
+        <div class="section-title">Player 1 Controls</div>
         <div class="controls-table">
           <div class="ctrl-row">
-            <span class="ctrl-name">Movement / D-Pad</span>
+            <span class="ctrl-name">Movement</span>
             <span class="ctrl-key">↑ ↓ ← →</span>
           </div>
           <div class="ctrl-row">
-            <span class="ctrl-name">LP &bull; Left Punch (Square)</span>
+            <span class="ctrl-name">Left Punch (□)</span>
             <span class="ctrl-key">Z</span>
           </div>
           <div class="ctrl-row">
-            <span class="ctrl-name">RP &bull; Right Punch (Triangle)</span>
+            <span class="ctrl-name">Right Punch (△)</span>
             <span class="ctrl-key">A</span>
           </div>
           <div class="ctrl-row">
-            <span class="ctrl-name">LK &bull; Left Kick (Cross)</span>
+            <span class="ctrl-name">Left Kick (✕)</span>
             <span class="ctrl-key">X</span>
           </div>
           <div class="ctrl-row">
-            <span class="ctrl-name">RK &bull; Right Kick (Circle)</span>
+            <span class="ctrl-name">Right Kick (○)</span>
             <span class="ctrl-key">S</span>
           </div>
           <div class="ctrl-row">
@@ -102,7 +94,7 @@
             <span class="ctrl-key">W / R</span>
           </div>
           <div class="ctrl-row">
-            <span class="ctrl-name">Start / Pause</span>
+            <span class="ctrl-name">Start</span>
             <span class="ctrl-key">Enter</span>
           </div>
           <div class="ctrl-row">
@@ -112,28 +104,28 @@
         </div>
       </div>
 
-      <!-- Controls Guide: Player 2 -->
+      <!-- Controls: Player 2 -->
       <div class="drawer-section">
-        <div class="section-title">⚔️ Player 2 Controls (VS Mode)</div>
+        <div class="section-title">Player 2 Controls</div>
         <div class="controls-table">
           <div class="ctrl-row">
-            <span class="ctrl-name">Movement / D-Pad</span>
-            <span class="ctrl-key">I &bull; K &bull; J &bull; L</span>
+            <span class="ctrl-name">Movement</span>
+            <span class="ctrl-key">I K J L</span>
           </div>
           <div class="ctrl-row">
-            <span class="ctrl-name">LP &bull; Left Punch (Square)</span>
+            <span class="ctrl-name">Left Punch (□)</span>
             <span class="ctrl-key">Numpad 4</span>
           </div>
           <div class="ctrl-row">
-            <span class="ctrl-name">RP &bull; Right Punch (Triangle)</span>
+            <span class="ctrl-name">Right Punch (△)</span>
             <span class="ctrl-key">Numpad 5</span>
           </div>
           <div class="ctrl-row">
-            <span class="ctrl-name">LK &bull; Left Kick (Cross)</span>
+            <span class="ctrl-name">Left Kick (✕)</span>
             <span class="ctrl-key">Numpad 1</span>
           </div>
           <div class="ctrl-row">
-            <span class="ctrl-name">RK &bull; Right Kick (Circle)</span>
+            <span class="ctrl-name">Right Kick (○)</span>
             <span class="ctrl-key">Numpad 2</span>
           </div>
           <div class="ctrl-row">
@@ -155,11 +147,11 @@
         </div>
       </div>
 
-      <!-- Gamepad Info -->
+      <!-- Gamepads -->
       <div class="drawer-section">
-        <div class="section-title">🎮 Gamepads & Controllers</div>
+        <div class="section-title">Gamepads</div>
         <div class="gamepad-info-box">
-          <p>Any standard USB / Bluetooth Gamepad (PlayStation, Xbox, Switch Pro, 8BitDo) works automatically out of the box with zero setup.</p>
+          <p>USB and Bluetooth gamepads work automatically.</p>
         </div>
       </div>
     </div>
@@ -167,38 +159,24 @@
 
   <!-- Fullscreen Arcade Viewport -->
   <main id="viewportCard" class="game-viewport-card viewport-aspect-16-9">
-    <!-- Hidden Offscreen Canvas for Emscripten Pthread -->
     <canvas id="canvas" width="1280" height="720" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
-    
-    <!-- Primary Hardware 60 FPS Render Canvas -->
     <canvas id="displayCanvas" width="1280" height="720" tabindex="1" oncontextmenu="event.preventDefault()"></canvas>
 
-    <!-- CRT Scanlines Overlay -->
     <div id="crtOverlay" class="crt-overlay"></div>
 
-    <!-- Authentic Arcade Boot & Launcher Overlay -->
+    <!-- Clean Authentic Boot Screen -->
     <div id="bootOverlay" class="boot-overlay">
-      <div class="boot-emblem">
-        <svg viewBox="0 0 24 24">
-          <path d="M12 2L1 21h22L12 2zm0 3.84L19.46 19H4.54L12 5.84zM11 10h2v4h-2zm0 6h2v2h-2z"/>
-        </svg>
-      </div>
-      <h1 class="boot-title">TEKKEN 3</h1>
-      <p class="boot-subtitle">The King of Iron Fist Tournament 3</p>
+      <img src="tekken_logo.jpg" alt="Tekken 3" class="boot-logo">
 
       <div class="boot-actions">
         <button id="btnStart" class="btn-primary" type="button">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z"/>
-          </svg>
           Insert Coin & Play
         </button>
       </div>
 
-      <!-- Initialization Progress Bar -->
       <div id="progressBox" class="boot-progress-box">
         <div class="progress-header">
-          <span id="progressText">Mounting game assets...</span>
+          <span id="progressText">Loading...</span>
           <span id="progressPercent">0%</span>
         </div>
         <div class="progress-bar-track">
