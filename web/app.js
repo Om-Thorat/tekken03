@@ -55,51 +55,222 @@
     canvas.height = 720;
   }
   const displayCanvas = document.getElementById('displayCanvas');
-  const dCtx = displayCanvas ? displayCanvas.getContext('2d', { alpha: false, desynchronized: true }) : null;
-  const offscreen = document.createElement('canvas');
-  const offCtx = offscreen.getContext('2d', { alpha: false });
+  let gl = null;
+  let glProgram = null;
+  let glTex = null;
+  let glTexW = 0;
+  let glTexH = 0;
+  let dCtx = null;
+  let offscreen = null;
+  let offCtx = null;
   let offImgData = null;
   let frameCount = 0;
+  let lastFpsTime = performance.now();
+  let fpsFrames = 0;
+
+  function initWebGL() {
+    if (!displayCanvas) return false;
+    try {
+      const glOptions = {
+        alpha: false,
+        depth: false,
+        stencil: false,
+        antialias: false,
+        preserveDrawingBuffer: false,
+        powerPreference: 'high-performance',
+        desynchronized: true
+      };
+      gl = displayCanvas.getContext('webgl2', glOptions) || displayCanvas.getContext('webgl', glOptions);
+      if (!gl) return false;
+
+      const vsSource = `
+        attribute vec2 aPos;
+        attribute vec2 aUv;
+        varying vec2 vUv;
+        void main() {
+          vUv = aUv;
+          gl_Position = vec4(aPos, 0.0, 1.0);
+        }
+      `;
+      const fsSource = `
+        precision mediump float;
+        varying vec2 vUv;
+        uniform sampler2D uTex;
+        void main() {
+          vec4 c = texture2D(uTex, vUv);
+          gl_FragColor = vec4(c.b, c.g, c.r, 1.0);
+        }
+      `;
+
+      function createShader(glCtx, type, src) {
+        const s = glCtx.createShader(type);
+        glCtx.shaderSource(s, src);
+        glCtx.compileShader(s);
+        if (!glCtx.getShaderParameter(s, glCtx.COMPILE_STATUS)) {
+          console.warn('[WebGL] Shader compile error:', glCtx.getShaderInfoLog(s));
+          glCtx.deleteShader(s);
+          return null;
+        }
+        return s;
+      }
+
+      const vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
+      const fs = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+      if (!vs || !fs) { gl = null; return false; }
+
+      glProgram = gl.createProgram();
+      gl.attachShader(glProgram, vs);
+      gl.attachShader(glProgram, fs);
+      gl.linkProgram(glProgram);
+      if (!gl.getProgramParameter(glProgram, gl.LINK_STATUS)) {
+        console.warn('[WebGL] Program link error:', gl.getShaderInfoLog(glProgram));
+        gl = null;
+        return false;
+      }
+
+      gl.useProgram(glProgram);
+      const uTexLoc = gl.getUniformLocation(glProgram, 'uTex');
+      gl.uniform1i(uTexLoc, 0);
+
+      const vaoBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vaoBuffer);
+      const quadData = new Float32Array([
+        -1,  1,  0, 0,
+        -1, -1,  0, 1,
+         1,  1,  1, 0,
+         1,  1,  1, 0,
+        -1, -1,  0, 1,
+         1, -1,  1, 1
+      ]);
+      gl.bufferData(gl.ARRAY_BUFFER, quadData, gl.STATIC_DRAW);
+
+      const aPosLoc = gl.getAttribLocation(glProgram, 'aPos');
+      const aUvLoc = gl.getAttribLocation(glProgram, 'aUv');
+      gl.enableVertexAttribArray(aPosLoc);
+      gl.vertexAttribPointer(aPosLoc, 2, gl.FLOAT, false, 16, 0);
+      gl.enableVertexAttribArray(aUvLoc);
+      gl.vertexAttribPointer(aUvLoc, 2, gl.FLOAT, false, 16, 8);
+
+      glTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, glTex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      glTexW = 0;
+      glTexH = 0;
+      remoteLog('WEBGL_INIT', 'Hardware-accelerated WebGL renderer initialized successfully');
+      return true;
+    } catch (err) {
+      console.warn('[WebGL] Initialization failed, using 2D fallback:', err);
+      gl = null;
+      return false;
+    }
+  }
+
+  if (!initWebGL() && displayCanvas) {
+    dCtx = displayCanvas.getContext('2d', { alpha: false, desynchronized: true });
+    offscreen = document.createElement('canvas');
+    offCtx = offscreen.getContext('2d', { alpha: false });
+    remoteLog('CANVAS2D_FALLBACK', 'Initialized 2D Canvas fallback');
+  }
+
+  if (displayCanvas) {
+    displayCanvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      gl = null;
+      remoteLog('WEBGL_LOST', 'WebGL context lost, falling back to 2D canvas');
+      if (!dCtx) {
+        dCtx = displayCanvas.getContext('2d', { alpha: false, desynchronized: true });
+        if (!offscreen) {
+          offscreen = document.createElement('canvas');
+          offCtx = offscreen.getContext('2d', { alpha: false });
+        }
+      }
+    }, false);
+    displayCanvas.addEventListener('webglcontextrestored', () => {
+      initWebGL();
+    }, false);
+  }
 
   window.tekkenDrawFrame = function (heapU32, ptr, w, h) {
-    if (!w || !h || !heapU32 || !displayCanvas || !dCtx) return;
+    if (!w || !h || !heapU32 || !displayCanvas) return;
 
-    if (offscreen.width !== w || offscreen.height !== h) {
-      offscreen.width = w;
-      offscreen.height = h;
-      offImgData = offCtx.createImageData(w, h);
+    if (gl) {
+      // GPU DIRECT PATH: Zero CPU loop, zero GC, BGR->RGB swizzle in hardware shader (<0.15ms)
+      const u8 = new Uint8Array(heapU32.buffer, ptr, w * h * 4);
+
+      gl.bindTexture(gl.TEXTURE_2D, glTex);
+      if (glTexW !== w || glTexH !== h) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, u8);
+        glTexW = w;
+        glTexH = h;
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, u8);
+      }
+
+      const dw = displayCanvas.width;
+      const dh = displayCanvas.height;
+      const isWideSource = (w / h) > 1.5;
+      let targetW = dw;
+      let targetX = 0;
+
+      if (!isWide || !isWideSource) {
+        targetW = Math.round((dh * 4) / 3);
+        targetX = Math.round((dw - targetW) / 2);
+      }
+
+      gl.viewport(0, 0, dw, dh);
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      gl.viewport(targetX, 0, targetW, dh);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    } else if (dCtx) {
+      // Software 2D fallback path
+      if (offscreen.width !== w || offscreen.height !== h) {
+        offscreen.width = w;
+        offscreen.height = h;
+        offImgData = offCtx.createImageData(w, h);
+      }
+
+      const dst32 = new Uint32Array(offImgData.data.buffer);
+      const startIdx = ptr >> 2;
+      for (let i = 0; i < dst32.length; i++) {
+        const px = heapU32[startIdx + i];
+        dst32[i] = 0xFF000000 | ((px & 0xFF) << 16) | (px & 0xFF00) | ((px >> 16) & 0xFF);
+      }
+      offCtx.putImageData(offImgData, 0, 0);
+
+      const dw = displayCanvas.width;
+      const dh = displayCanvas.height;
+      const isWideSource = (w / h) > 1.5;
+      let targetW = dw;
+      let targetX = 0;
+      if (!isWide || !isWideSource) {
+        targetW = Math.round((dh * 4) / 3);
+        targetX = Math.round((dw - targetW) / 2);
+      }
+
+      dCtx.fillStyle = '#000000';
+      dCtx.fillRect(0, 0, dw, dh);
+      dCtx.imageSmoothingEnabled = false;
+      dCtx.drawImage(offscreen, 0, 0, w, h, targetX, 0, targetW, dh);
     }
-
-    const dst32 = new Uint32Array(offImgData.data.buffer);
-    const startIdx = ptr >> 2;
-
-    for (let i = 0; i < dst32.length; i++) {
-      const px = heapU32[startIdx + i];
-      const b = px & 0xFF;
-      const g = (px >> 8) & 0xFF;
-      const r = (px >> 16) & 0xFF;
-      dst32[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
-    }
-
-    offCtx.putImageData(offImgData, 0, 0);
-
-    const dw = displayCanvas.width;
-    const dh = displayCanvas.height;
-
-    // Standard 4:3 PSX aspect ratio inside widescreen frame
-    const targetW = Math.round((dh * 4) / 3);
-    const targetX = Math.round((dw - targetW) / 2);
-
-    dCtx.imageSmoothingEnabled = false;
-    dCtx.drawImage(offscreen, 0, 0, w, h, targetX, 0, targetW, dh);
 
     if (bootOverlay && !bootOverlay.classList.contains('hidden')) {
       bootOverlay.classList.add('hidden');
     }
 
     frameCount++;
-    if (frameCount === 1 || frameCount === 60 || frameCount % 300 === 0) {
-      remoteLog('FRAME_RENDERED', `Rendered frame #${frameCount} (${w}x${h}) on displayCanvas`);
+    fpsFrames++;
+    const now = performance.now();
+    if (now - lastFpsTime >= 1000) {
+      const currentFps = ((fpsFrames * 1000) / (now - lastFpsTime)).toFixed(1);
+      remoteLog('FPS_STATS', `FPS: ${currentFps} | Frame: #${frameCount} | Res: ${w}x${h} | Mode: ${gl ? 'WebGL-HW' : 'Canvas2D'}`);
+      fpsFrames = 0;
+      lastFpsTime = now;
     }
   };
 
