@@ -1,0 +1,13 @@
+{
+  "name": "tekken3-web",
+  "version": "1.0.0",
+  "description": "Tekken 3 Static Recompilation Web Port (WebAssembly + WebGL)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["tekken3", "webassembly", "wasm", "webgl", "psxrecomp"],
+  "author": "",
+  "license": "MIT"
+}

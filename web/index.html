@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tekken 3 Recompiled | Web Port (WebAssembly + WebGL)</title>
+  <meta name="description" content="Tekken 3 static recompilation running in modern web browsers via WebAssembly and WebGL. 60 FPS fighting game arcade port.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;500;600;700&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header>
+    <div class="logo-container">
+      <h1 class="logo-title">Tekken 3</h1>
+      <span class="logo-badge">Web Edition</span>
+    </div>
+
+    <div class="header-status">
+      <div class="status-indicator">
+        <span class="status-dot"></span>
+        <span id="wasmStatus">Engine: Standby</span>
+      </div>
+      <div class="status-indicator">
+        <span id="gamepadStatus">🎮 Keyboard Active</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Game Area -->
+  <main>
+    <!-- Viewport Container -->
+    <div id="viewportCard" class="game-viewport-card viewport-aspect-16-9">
+      
+      <!-- Canvas rendered by WebGL / WebAssembly -->
+      <canvas id="canvas" width="1280" height="720" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+      <canvas id="displayCanvas" width="1280" height="720" tabindex="1" oncontextmenu="event.preventDefault()"></canvas>
+
+      <!-- Optional CRT Scanline Shader Overlay -->
+      <div id="crtOverlay" class="crt-overlay"></div>
+
+      <!-- Boot / Launcher Overlay -->
+      <div id="bootOverlay" class="boot-overlay">
+        <div class="boot-emblem">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 2L1 21h22L12 2zm0 3.84L19.46 19H4.54L12 5.84zM11 10h2v4h-2zm0 6h2v2h-2z"/>
+          </svg>
+        </div>
+        <h2 class="boot-title">The King of Iron Fist Tournament 3</h2>
+        <p class="boot-subtitle">Static Recompilation • 60 FPS • WebAssembly & WebGL Hardware Accelerated</p>
+
+        <div class="boot-actions">
+          <button id="btnStart" class="btn-primary" type="button">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+            Insert Coin & Play
+          </button>
+          <button id="btnCustomRom" class="btn-secondary" type="button">
+            Load Custom Disc (.bin)
+          </button>
+          <input type="file" id="fileInput" accept=".bin,.cue,.iso,.chd" style="display: none;">
+        </div>
+
+        <!-- Download & Initialization Progress Bar -->
+        <div id="progressBox" class="boot-progress-box">
+          <div class="progress-header">
+            <span id="progressText">Mounting game assets...</span>
+            <span id="progressPercent">0%</span>
+          </div>
+          <div class="progress-bar-track">
+            <div id="progressBar" class="progress-bar-fill"></div>
+          </div>
+          <p class="progress-status">Local files are cached in browser IndexedDB for instant replay</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Controls & Display Bar -->
+    <div class="control-bar">
+      <div class="control-group">
+        <button id="btnAspect" class="icon-btn" type="button">Aspect: 16:9</button>
+        <button id="btnCrt" class="icon-btn" type="button">CRT Scanlines</button>
+        <button id="btnFullscreen" class="icon-btn" type="button">Fullscreen</button>
+      </div>
+
+      <div class="control-group">
+        <div class="volume-slider-container">
+          <span style="font-size: 0.85rem; color: var(--text-dim);">🔊 Volume</span>
+          <input id="volumeSlider" class="volume-slider" type="range" min="0" max="1" step="0.05" value="0.8">
+        </div>
+      </div>
+    </div>
+
+    <!-- Info & Controls Deck -->
+    <div class="info-deck">
+      
+      <!-- Keybinds & Controller Card -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">🕹️ Arcade Input Controls</h3>
+          <span style="font-size: 0.8rem; color: var(--accent-gold);">Gamepad API Plug & Play Ready</span>
+        </div>
+
+        <div class="controls-grid">
+          <div class="control-item">
+            <span class="control-label">D-Pad / Movement</span>
+            <div style="display: flex; gap: 4px;">
+              <span class="key-badge">W</span>
+              <span class="key-badge">A</span>
+              <span class="key-badge">S</span>
+              <span class="key-badge">D</span>
+            </div>
+          </div>
+
+          <div class="control-item">
+            <span class="control-label">Left Punch (□ / 1)</span>
+            <span class="key-badge">J</span>
+          </div>
+
+          <div class="control-item">
+            <span class="control-label">Right Punch (△ / 2)</span>
+            <span class="key-badge">I</span>
+          </div>
+
+          <div class="control-item">
+            <span class="control-label">Left Kick (✕ / 3)</span>
+            <span class="key-badge">K</span>
+          </div>
+
+          <div class="control-item">
+            <span class="control-label">Right Kick (○ / 4)</span>
+            <span class="key-badge">L</span>
+          </div>
+
+          <div class="control-item">
+            <span class="control-label">Start / Pause</span>
+            <span class="key-badge">Enter</span>
+          </div>
+
+          <div class="control-item">
+            <span class="control-label">Select</span>
+            <span class="key-badge">Shift</span>
+          </div>
+
+          <div class="control-item">
+            <span class="control-label">USB / Bluetooth Gamepad</span>
+            <span class="key-badge" style="color: var(--accent-cyan);">Auto-Mapped</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Online Multiplayer Preview (Phase 4) -->
+      <div class="card multiplayer-preview">
+        <div class="card-header">
+          <h3 class="card-title">⚔️ Online Multiplayer</h3>
+          <span style="font-size: 0.75rem; color: var(--accent-cyan); background: rgba(0, 229, 255, 0.1); padding: 3px 6px; border-radius: 4px;">Phase 4 In Progress</span>
+        </div>
+
+        <div class="lobby-pill">
+          <div>
+            <div style="font-weight: 600; font-size: 0.9rem;">Rollback Netplay Engine</div>
+            <div class="lobby-desc">P2P WebRTC / WebSocket delay-sync input exchange.</div>
+          </div>
+          <span style="font-size: 1.2rem;">🌐</span>
+        </div>
+
+        <p class="lobby-desc">
+          Lockstep & rollback networking can connect player 1 & player 2 inputs across web browsers with sub-frame input delay.
+        </p>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <span>Tekken 3 © BANDAI NAMCO Entertainment Inc. Statically recompiled for educational preservation.</span>
+    <span>Powered by Emscripten, WebAssembly & WebGL 2.0</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
