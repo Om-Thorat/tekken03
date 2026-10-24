@@ -245,12 +245,17 @@
     progressBox.classList.add('active');
 
     try {
-      // 1. Fetch BIOS & Game Config
-      let [biosData, tomlData, cueData, slusData] = await Promise.all([
+      // 1. Fetch BIOS, Configs, Keybinds, Memory Cards & Mods
+      let [biosData, tomlData, settingsData, keybindsData, cueData, slusData, card1Data, card2Data, modsManifests] = await Promise.all([
         fetchWithProgress('/wasm/bios/openbios.bin', 'OpenBIOS Image'),
         fetchWithProgress('/wasm/game.toml', 'Game Profile'),
+        fetch('/wasm/settings.toml').then(r => r.text()).catch(() => ''),
+        fetch('/wasm/keybinds.ini').then(r => r.text()).catch(() => ''),
         fetchWithProgress('/wasm/disc/Tekken%203%20(USA).cue', 'Disc CUE Sheet'),
         fetchWithProgress('/wasm/disc/SLUS_004.02', 'Boot Executable (SLUS-00402)'),
+        fetchWithProgress('/wasm/saves/card1.mcd', 'Memory Card 1'),
+        fetchWithProgress('/wasm/saves/card2.mcd', 'Memory Card 2'),
+        fetch('/wasm/mods_manifests.json').then(r => r.json()).catch(() => null),
       ]);
 
       // 2. Fetch or mount Track 1 (.bin)
@@ -319,14 +324,50 @@
             );
 
             mod.FS.createDataFile('/', 'game.toml', tomlData, true, true);
-            console.log('[Tekken Web] Virtual files mounted successfully');
+            if (settingsData) {
+              mod.FS.createDataFile('/', 'settings.toml', settingsData, true, true);
+            }
+            if (keybindsData) {
+              mod.FS.createDataFile('/', 'keybinds.ini', keybindsData, true, true);
+            }
+
+            // Mount Memory Cards
+            try { mod.FS.mkdir('/saves'); } catch (e) { }
+            if (card1Data) mod.FS.createDataFile('/saves', 'card1.mcd', card1Data, true, true);
+            if (card2Data) mod.FS.createDataFile('/saves', 'card2.mcd', card2Data, true, true);
+
+            // Mount Mods Manifests (unlocks roster, modes, and true widescreen)
+            function ensureDir(p) {
+              const parts = p.split('/').filter(Boolean);
+              let cur = '';
+              for (const part of parts) {
+                cur += '/' + part;
+                try { mod.FS.mkdir(cur); } catch (e) { }
+              }
+            }
+            if (modsManifests) {
+              for (const [relPath, content] of Object.entries(modsManifests)) {
+                const fullPath = '/mods/' + relPath;
+                const dir = fullPath.substring(0, fullPath.lastIndexOf('/'));
+                const filename = fullPath.substring(fullPath.lastIndexOf('/') + 1);
+                ensureDir(dir);
+                mod.FS.createDataFile(dir, filename, content, true, true);
+              }
+            }
+
+            console.log('[Tekken Web] Virtual files mounted successfully (BIOS, Disc, Settings, Keybinds, Saves, Mods)');
 
             // Free JavaScript memory references immediately so GC can reclaim the 600MB+ buffers
             biosData = null;
             tomlData = null;
+            settingsData = null;
+            keybindsData = null;
             cueData = null;
             slusData = null;
             track1Data = null;
+            card1Data = null;
+            card2Data = null;
+            modsManifests = null;
             customDiscBuffer = null;
           },
         ],
@@ -345,10 +386,69 @@
       progressText.textContent = `Boot Error: ${err.message}`;
       progressPercent.textContent = 'ERR';
       btnStart.style.display = 'inline-flex';
-      btnCustomRom.style.display = 'inline-flex';
+      if (btnCustomRom) btnCustomRom.style.display = 'inline-flex';
       isRunning = false;
     }
   }
+
+  // Collapsible Left Drawer Logic
+  const drawerToggle = document.getElementById('drawerToggle');
+  const drawerClose = document.getElementById('drawerClose');
+  const drawerBackdrop = document.getElementById('drawerBackdrop');
+  const sidebarDrawer = document.getElementById('sidebarDrawer');
+
+  function openDrawer() {
+    if (sidebarDrawer) sidebarDrawer.classList.add('open');
+    if (drawerBackdrop) drawerBackdrop.classList.add('open');
+    if (drawerToggle) drawerToggle.classList.add('active');
+  }
+
+  function closeDrawer() {
+    if (sidebarDrawer) sidebarDrawer.classList.remove('open');
+    if (drawerBackdrop) drawerBackdrop.classList.remove('open');
+    if (drawerToggle) drawerToggle.classList.remove('active');
+    // Refocus canvas so fight controls immediately respond
+    if (displayCanvas) displayCanvas.focus();
+    else if (canvas) canvas.focus();
+  }
+
+  if (drawerToggle) {
+    drawerToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (sidebarDrawer && sidebarDrawer.classList.contains('open')) {
+        closeDrawer();
+      } else {
+        openDrawer();
+      }
+    });
+  }
+
+  if (drawerClose) {
+    drawerClose.addEventListener('click', closeDrawer);
+  }
+
+  if (drawerBackdrop) {
+    drawerBackdrop.addEventListener('click', closeDrawer);
+  }
+
+  // Key shortcuts: Escape to close drawer, Tab to toggle drawer
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (sidebarDrawer && sidebarDrawer.classList.contains('open')) {
+        closeDrawer();
+        e.preventDefault();
+      }
+    } else if (e.key === 'Tab') {
+      if (sidebarDrawer) {
+        if (sidebarDrawer.classList.contains('open')) {
+          closeDrawer();
+        } else {
+          openDrawer();
+        }
+        e.preventDefault();
+      }
+    }
+  });
 
   // Event Listeners
   btnStart.addEventListener('click', () => {
@@ -366,9 +466,11 @@
     bootTekken();
   });
 
-  btnCustomRom.addEventListener('click', () => {
-    fileInput.click();
-  });
+  if (btnCustomRom) {
+    btnCustomRom.addEventListener('click', () => {
+      fileInput.click();
+    });
+  }
 
   fileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
@@ -407,7 +509,6 @@
   });
 
   volumeSlider.addEventListener('input', (e) => {
-    // SDL audio master volume hook if supported
     const val = parseFloat(e.target.value);
     console.log('[Tekken Web] Volume set to:', val);
   });

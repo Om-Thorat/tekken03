@@ -147,6 +147,8 @@ packet_tag_sites = ["0x8006CDD0", "0x8006CEB8", "0x8006CFF0"]
 
 [controller]
 default_mode = "digital"
+p1_device = "keyboard"
+p2_device = "keyboard"
 
 # Online mount gate: digests + track count + optional TOC fingerprint
 # (see docs/NETPLAY.md).

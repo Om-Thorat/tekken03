@@ -16,6 +16,8 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.bin': 'application/octet-stream',
+  '.mcd': 'application/octet-stream',
+  '.ini': 'text/plain; charset=UTF-8',
   '.cue': 'text/plain; charset=UTF-8',
   '.toml': 'text/plain; charset=UTF-8',
   '.mp3': 'audio/mpeg',
