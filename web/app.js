@@ -375,7 +375,10 @@
       throw new Error(`Failed to download ${url}: ${response.statusText}`);
     }
 
-    const contentLength = +response.headers.get('Content-Length') || 0;
+    let contentLength = +response.headers.get('Content-Length') || 0;
+    if (!contentLength && (url.includes('Track%201') || url.includes('Track 1'))) {
+      contentLength = 632532768; // 603.2 MB exact
+    }
     const reader = response.body.getReader();
     let received = 0;
 
@@ -449,25 +452,37 @@
     try {
       // 1. Fetch BIOS, Configs, Keybinds, Memory Cards & Mods
       let [biosData, tomlData, settingsData, keybindsData, cueData, slusData, card1Data, card2Data, modsManifests] = await Promise.all([
-        fetchWithProgress('/wasm/bios/openbios.bin', 'OpenBIOS Image'),
-        fetchWithProgress('/wasm/game.toml', 'Game Profile'),
-        fetch('/wasm/settings.toml').then(r => r.text()).catch(() => ''),
-        fetch('/wasm/keybinds.ini').then(r => r.text()).catch(() => ''),
-        fetchWithProgress('/wasm/disc/Tekken%203%20(USA).cue', 'Disc CUE Sheet'),
-        fetchWithProgress('/wasm/disc/SLUS_004.02', 'Boot Executable (SLUS-00402)'),
-        fetchWithProgress('/wasm/saves/card1.mcd', 'Memory Card 1'),
-        fetchWithProgress('/wasm/saves/card2.mcd', 'Memory Card 2'),
-        fetch('/wasm/mods_manifests.json').then(r => r.json()).catch(() => null),
+        fetchWithProgress('wasm/bios/openbios.bin', 'OpenBIOS Image'),
+        fetchWithProgress('wasm/game.toml', 'Game Profile'),
+        fetch('wasm/settings.toml').then(r => r.text()).catch(() => ''),
+        fetch('wasm/keybinds.ini').then(r => r.text()).catch(() => ''),
+        fetchWithProgress('wasm/disc/Tekken%203%20(USA).cue', 'Disc CUE Sheet'),
+        fetchWithProgress('wasm/disc/SLUS_004.02', 'Boot Executable (SLUS-00402)'),
+        fetchWithProgress('wasm/saves/card1.mcd', 'Memory Card 1'),
+        fetchWithProgress('wasm/saves/card2.mcd', 'Memory Card 2'),
+        fetch('wasm/mods_manifests.json').then(r => r.json()).catch(() => null),
       ]);
 
       // 2. Fetch or mount Track 1 (.bin)
       let track1Data = customDiscBuffer;
       if (!track1Data) {
-        track1Data = await fetchWithProgress(
-          '/wasm/disc/Tekken%203%20(USA)%20(Track%201).bin',
-          'Tekken 3 Disc Track 1 (USA)',
-          'tekken3_track1_bin'
-        );
+        const LOCAL_DISC_URL = 'wasm/disc/Tekken%203%20(USA)%20(Track%201).bin';
+        const ARCHIVE_DISC_URL = 'https://archive.org/download/tekken3_playstation/Tekken%203%20%28USA%29.zip/Tekken%203%20%28USA%29%20%28Track%201%29.bin';
+
+        try {
+          track1Data = await fetchWithProgress(
+            LOCAL_DISC_URL,
+            'Tekken 3 Disc Track 1 (USA)',
+            'tekken3_track1_bin'
+          );
+        } catch (localErr) {
+          console.warn('[Disc] Local disc file not found, streaming from Archive.org mirror...');
+          track1Data = await fetchWithProgress(
+            ARCHIVE_DISC_URL,
+            'Tekken 3 Disc (Archive Mirror)',
+            'tekken3_track1_bin'
+          );
+        }
       }
 
       progressText.textContent = 'Initializing WebAssembly Runtime...';
@@ -476,15 +491,15 @@
 
       // 3. Load Wasm Script
       if (typeof createTekkenModule === 'undefined') {
-        await loadWasmScript('/wasm/Tekken_3_Recompiled.js');
+        await loadWasmScript('wasm/Tekken_3_Recompiled.js');
       }
 
       // 4. Initialize Emscripten Module
       wasmStatus.textContent = 'Engine: Initializing Wasm & Workers...';
       wasmInstance = await createTekkenModule({
         canvas: canvas,
-        mainScriptUrlOrBlob: '/wasm/Tekken_3_Recompiled.js',
-        locateFile: (path) => '/wasm/' + path,
+        mainScriptUrlOrBlob: 'wasm/Tekken_3_Recompiled.js',
+        locateFile: (path) => 'wasm/' + path,
         arguments: ['--no-launcher', '--game', 'game.toml'],
         print: (text) => {
           remoteLog('WASM_STDOUT', text);

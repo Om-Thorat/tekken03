@@ -5,3 +5,5 @@ dump_*.png
 psx_last_run_report.json
 src_recomp/build*
 src_recomp/disc/
+roms/
+src_recomp/
