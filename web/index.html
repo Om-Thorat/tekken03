@@ -49,6 +49,7 @@
       <div class="drawer-section">
         <div class="section-title">Settings</div>
         <div class="drawer-actions-grid">
+          <button id="btnOnlineRoom" class="drawer-action-btn highlight-gold" type="button">⚔️ Online Match</button>
           <button id="btnAspect" class="drawer-action-btn" type="button">Aspect: 16:9</button>
           <button id="btnCrt" class="drawer-action-btn" type="button">CRT Scanlines</button>
           <button id="btnFps" class="drawer-action-btn active" type="button">FPS: On</button>
@@ -164,10 +165,24 @@
     <canvas id="canvas" width="1280" height="720" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
     <canvas id="displayCanvas" width="1280" height="720" tabindex="1" oncontextmenu="event.preventDefault()"></canvas>
 
+    <!-- P2 Remote Play Video Stream -->
+    <video id="remoteVideo" class="remote-video" autoplay playsinline></video>
+
     <!-- Realtime HUD FPS Badge (Top-Right) -->
     <div id="fpsBadge" class="fps-badge active">
       <span id="fpsVal" class="fps-val">--</span>
       <span class="fps-unit">FPS</span>
+    </div>
+
+    <!-- Realtime Multiplayer HUD (Top-Center) -->
+    <div id="multiplayerHud" class="multiplayer-hud">
+      <div class="hud-status-badge">
+        <span class="hud-dot"></span>
+        <span id="hudRole">P2 REMOTE</span>
+      </div>
+      <span id="hudRoom" class="hud-room">ROOM: --</span>
+      <span id="hudPing" class="hud-ping good">-- ms</span>
+      <button id="btnDisconnect" class="hud-disconnect-btn" type="button" title="Disconnect">✕ Exit</button>
     </div>
 
     <div id="crtOverlay" class="crt-overlay"></div>
@@ -179,6 +194,9 @@
       <div class="boot-actions">
         <button id="btnStart" class="btn-outline" type="button">
           Play
+        </button>
+        <button id="btnOnlineHero" class="btn-outline btn-online" type="button">
+          ⚔️ Online Match
         </button>
       </div>
 
@@ -194,6 +212,75 @@
     </div>
   </main>
 
+  <!-- Online Multiplayer Modal Dialog -->
+  <dialog id="onlineModal" class="online-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span class="modal-icon">⚔️</span>
+          <span>ONLINE MULTIPLAYER (P2P NETPLAY)</span>
+        </div>
+        <button id="modalClose" class="modal-close-btn" type="button" title="Close (Esc)">✕</button>
+      </div>
+
+      <div class="modal-tabs">
+        <button id="tabHost" class="modal-tab active" type="button">Host Match (P1)</button>
+        <button id="tabJoin" class="modal-tab" type="button">Join Match (P2)</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- HOST PANEL -->
+        <div id="panelHost" class="modal-panel active">
+          <p class="panel-desc">
+            Host a match in your browser. A friend connects directly via a private WebRTC peer-to-peer room with 60 FPS video & zero server lag.
+          </p>
+
+          <button id="btnCreateRoom" class="btn-neon-action" type="button">
+            Create Online Room
+          </button>
+
+          <div id="hostRoomBox" class="host-room-box" style="display: none;">
+            <div class="room-code-label">SHARE ROOM CODE OR LINK</div>
+            <div class="room-code-display">
+              <span id="hostRoomCode">TK3-XXXX</span>
+              <button id="btnCopyLink" class="btn-copy-link" type="button">Copy Link</button>
+            </div>
+            <div id="hostStatus" class="host-status-text">🟡 Waiting for Player 2 to join...</div>
+
+            <button id="hostStartBtn" class="btn-start-match" type="button" style="display: none;">
+              Launch Match Now
+            </button>
+          </div>
+        </div>
+
+        <!-- JOIN PANEL -->
+        <div id="panelJoin" class="modal-panel">
+          <p class="panel-desc">
+            Join a friend's hosted room as Player 2. Streams smooth 60 FPS video & audio with responsive fighting controls. No ROM download required!
+          </p>
+
+          <div class="join-input-group">
+            <input id="joinRoomInput" type="text" placeholder="Enter Room Code (e.g. TK3-4A9B) or Paste Link" class="join-input" autocomplete="off" spellcheck="false">
+            <button id="btnJoinRoom" class="btn-neon-action" type="button">
+              Join Match
+            </button>
+          </div>
+
+          <div id="joinStatus" class="join-status-text">Standby</div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="p2-quick-guide">
+          <span class="guide-title">🎮 Player 2 Controls:</span>
+          <span><b>Move:</b> Arrow Keys or WASD &bull; <b>Punches:</b> J (□) / K (△) or Z / A &bull; <b>Kicks:</b> M (✕) / , (○) or X / S &bull; <b>Gamepad:</b> Any USB/Bluetooth controller works automatically</span>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="peerjs.min.js"></script>
   <script src="app.js"></script>
+  <script src="multiplayer.js"></script>
 </body>
 </html>

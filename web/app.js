@@ -417,6 +417,7 @@
   async function bootTekken(customDiscBuffer = null) {
     if (isRunning) return;
     isRunning = true;
+    window.__isTekkenRunning = true;
 
     btnStart.style.display = 'none';
     btnCustomRom.style.display = 'none';
@@ -567,6 +568,8 @@
           bootOverlay.classList.add('hidden');
         },
       });
+      window.wasmInstance = wasmInstance;
+      window.Module = wasmInstance;
 
       canvas.focus();
     } catch (err) {
@@ -578,6 +581,7 @@
       isRunning = false;
     }
   }
+  window.bootTekken = bootTekken;
 
   // Collapsible Left Drawer Logic
   const drawerToggle = document.getElementById('drawerToggle');

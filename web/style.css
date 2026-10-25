@@ -631,3 +631,400 @@ html, body {
   color: var(--text-dim);
   line-height: 1.45;
 }
+
+/* ==========================================================================
+   Multiplayer (WebRTC P2P) UI & Stream Styling
+   ========================================================================== */
+
+.drawer-action-btn.highlight-gold {
+  border-color: rgba(255, 193, 7, 0.4);
+  color: var(--accent-gold);
+  background: rgba(255, 193, 7, 0.08);
+  font-weight: 700;
+}
+
+.drawer-action-btn.highlight-gold:hover {
+  background: rgba(255, 193, 7, 0.18);
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 16px rgba(255, 193, 7, 0.35);
+}
+
+.btn-online {
+  border-color: rgba(255, 193, 7, 0.5) !important;
+  color: #fff !important;
+  background: linear-gradient(135deg, rgba(255, 193, 7, 0.15), rgba(255, 23, 68, 0.2)) !important;
+  box-shadow: 0 0 20px rgba(255, 193, 7, 0.25);
+  margin-left: 12px;
+}
+
+.btn-online:hover {
+  background: linear-gradient(135deg, rgba(255, 193, 7, 0.3), rgba(255, 23, 68, 0.35)) !important;
+  border-color: var(--accent-gold) !important;
+  box-shadow: 0 0 28px rgba(255, 193, 7, 0.45);
+  transform: translateY(-2px);
+}
+
+/* Remote Play Stream Video Element */
+.remote-video {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  z-index: 5;
+}
+
+.remote-video.active {
+  display: block;
+}
+
+/* Multiplayer In-Match Floating HUD */
+.multiplayer-hud {
+  display: none;
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  align-items: center;
+  gap: 12px;
+  background: rgba(10, 12, 18, 0.88);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 15px rgba(0, 229, 255, 0.2);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+}
+
+.multiplayer-hud.active {
+  display: flex;
+}
+
+.hud-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+}
+
+.hud-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #00e676;
+  box-shadow: 0 0 8px #00e676;
+  animation: pulse-dot 1.5s infinite;
+}
+
+.hud-room {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  padding-left: 10px;
+}
+
+.hud-ping {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.hud-ping.good { color: #00e676; background: rgba(0, 230, 118, 0.1); }
+.hud-ping.medium { color: var(--accent-gold); background: rgba(255, 193, 7, 0.1); }
+.hud-ping.high { color: var(--primary); background: rgba(255, 23, 68, 0.1); }
+
+.hud-disconnect-btn {
+  background: rgba(255, 23, 68, 0.15);
+  border: 1px solid rgba(255, 23, 68, 0.3);
+  color: #ff5252;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hud-disconnect-btn:hover {
+  background: rgba(255, 23, 68, 0.35);
+  border-color: #ff5252;
+  color: #fff;
+}
+
+/* Online Modal Dialog */
+.online-modal {
+  margin: auto;
+  border: none;
+  background: transparent;
+  padding: 0;
+  max-width: 560px;
+  width: 90vw;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+}
+
+.online-modal::backdrop {
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+}
+
+.modal-card {
+  background: rgba(15, 17, 24, 0.96);
+  border: 1px solid rgba(255, 23, 68, 0.4);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 0 35px rgba(255, 23, 68, 0.25);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: rgba(22, 25, 36, 0.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: 0.06em;
+  color: #fff;
+}
+
+.modal-icon {
+  font-size: 1.3rem;
+}
+
+.modal-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.2rem;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.modal-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.modal-tabs {
+  display: flex;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 12, 18, 0.5);
+}
+
+.modal-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.modal-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  background: rgba(255, 23, 68, 0.06);
+}
+
+.modal-body {
+  padding: 22px 20px;
+}
+
+.modal-panel {
+  display: none;
+}
+
+.modal-panel.active {
+  display: block;
+}
+
+.panel-desc {
+  font-size: 0.88rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-bottom: 18px;
+}
+
+.btn-neon-action {
+  width: 100%;
+  background: linear-gradient(135deg, #ff1744, #d50000);
+  border: none;
+  color: #fff;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+  padding: 13px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 4px 18px rgba(255, 23, 68, 0.4);
+  transition: all 0.2s ease;
+}
+
+.btn-neon-action:hover:not(:disabled) {
+  background: linear-gradient(135deg, #ff4569, #ff1744);
+  box-shadow: 0 6px 24px rgba(255, 23, 68, 0.6);
+  transform: translateY(-1px);
+}
+
+.btn-neon-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.host-room-box {
+  margin-top: 18px;
+  background: rgba(22, 25, 36, 0.7);
+  border: 1px dashed rgba(255, 193, 7, 0.4);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.room-code-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent-gold);
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+.room-code-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+#hostRoomCode {
+  font-family: var(--font-mono);
+  font-size: 1.7rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  color: #fff;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+}
+
+.btn-copy-link {
+  background: rgba(255, 193, 7, 0.2);
+  border: 1px solid var(--accent-gold);
+  color: var(--accent-gold);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.82rem;
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-copy-link:hover {
+  background: var(--accent-gold);
+  color: #000;
+  box-shadow: 0 0 12px rgba(255, 193, 7, 0.4);
+}
+
+.host-status-text, .join-status-text {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-top: 8px;
+  min-height: 20px;
+}
+
+.btn-start-match {
+  margin-top: 14px;
+  background: rgba(0, 229, 255, 0.15);
+  border: 1px solid var(--accent-cyan);
+  color: var(--accent-cyan);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  padding: 9px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-start-match:hover {
+  background: var(--accent-cyan);
+  color: #000;
+  box-shadow: 0 0 16px rgba(0, 229, 255, 0.5);
+}
+
+.join-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.join-input {
+  width: 100%;
+  background: rgba(10, 12, 18, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: #fff;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.join-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 12px rgba(255, 23, 68, 0.35);
+}
+
+.modal-footer {
+  padding: 14px 20px;
+  background: rgba(10, 12, 18, 0.6);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.p2-quick-guide {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.p2-quick-guide .guide-title {
+  color: var(--text-dim);
+  font-weight: 700;
+  display: block;
+  margin-bottom: 2px;
+}
+
