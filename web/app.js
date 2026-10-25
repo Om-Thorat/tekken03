@@ -29,31 +29,7 @@
   let isWide = true;
   let showFps = true;
 
-  function remoteLog(type, msg) {
-    try {
-      fetch('/api/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: `[${type}] ${typeof msg === 'object' ? JSON.stringify(msg) : msg}`
-      }).catch(() => {});
-    } catch (e) {}
-  }
-  const origErr = console.error;
-  console.error = function (...args) {
-    origErr.apply(console, args);
-    remoteLog('CONSOLE_ERROR', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
-  };
-  const origWarn = console.warn;
-  console.warn = function (...args) {
-    origWarn.apply(console, args);
-    remoteLog('CONSOLE_WARN', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
-  };
-  window.addEventListener('error', (e) => {
-    remoteLog('WINDOW_ERROR', e.message + ' at ' + e.filename + ':' + e.lineno + ':' + e.colno);
-  });
-  window.addEventListener('unhandledrejection', (e) => {
-    remoteLog('UNHANDLED_REJECTION', e.reason ? (e.reason.stack || e.reason.message || e.reason) : 'unknown');
-  });
+
   if (canvas) {
     canvas.width = 1280;
     canvas.height = 720;
@@ -164,7 +140,6 @@
 
       glTexW = 0;
       glTexH = 0;
-      remoteLog('WEBGL_INIT', 'Hardware-accelerated WebGL renderer initialized successfully');
       return true;
     } catch (err) {
       console.warn('[WebGL] Initialization failed, using 2D fallback:', err);
@@ -177,14 +152,12 @@
     dCtx = displayCanvas.getContext('2d', { alpha: false, desynchronized: true });
     offscreen = document.createElement('canvas');
     offCtx = offscreen.getContext('2d', { alpha: false });
-    remoteLog('CANVAS2D_FALLBACK', 'Initialized 2D Canvas fallback');
   }
 
   if (displayCanvas) {
     displayCanvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
       gl = null;
-      remoteLog('WEBGL_LOST', 'WebGL context lost, falling back to 2D canvas');
       if (!dCtx) {
         dCtx = displayCanvas.getContext('2d', { alpha: false, desynchronized: true });
         if (!offscreen) {
@@ -305,7 +278,6 @@
     }
   };
 
-  remoteLog('PAGE_READY', 'Tekken Web client ready (displayCanvas set)');
 
   // Simple IndexedDB Cache for Disc Image (~600MB)
   const DB_NAME = 'Tekken3WebDB';
@@ -375,32 +347,36 @@
       throw new Error(`Failed to download ${url}: ${response.statusText}`);
     }
 
+    // For non-disc files (small files <10MB: BIOS, configs, cue, save states, etc.),
+    // read arrayBuffer directly without stream chunk assembly.
+    // This avoids RangeError from compression header discrepancies (e.g. gzip Content-Length).
+    const isLargeStream = url.includes('Track%201') || url.includes('Track 1');
+    if (!isLargeStream) {
+      const buf = await response.arrayBuffer();
+      const data = new Uint8Array(buf);
+      if (cacheKey) {
+        setCachedFile(cacheKey, data).catch(console.warn);
+      }
+      return data;
+    }
+
     let contentLength = +response.headers.get('Content-Length') || 0;
-    if (!contentLength && (url.includes('Track%201') || url.includes('Track 1'))) {
+    if (!contentLength && isLargeStream) {
       contentLength = 632532768; // 603.2 MB exact
     }
     const reader = response.body.getReader();
     let received = 0;
-
-    let fullBuffer = contentLength > 0 ? new Uint8Array(contentLength) : null;
-    let chunks = fullBuffer ? null : [];
-    let offset = 0;
+    const chunks = [];
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      if (fullBuffer) {
-        fullBuffer.set(value, offset);
-        offset += value.length;
-        received = offset;
-      } else {
-        chunks.push(value);
-        received += value.length;
-      }
+      chunks.push(value);
+      received += value.length;
 
       if (contentLength > 0) {
-        const pct = Math.round((received / contentLength) * 100);
+        const pct = Math.min(100, Math.round((received / contentLength) * 100));
         const mbReceived = (received / (1024 * 1024)).toFixed(1);
         const mbTotal = (contentLength / (1024 * 1024)).toFixed(1);
         progressPercent.textContent = `${pct}%`;
@@ -412,14 +388,11 @@
       }
     }
 
-    if (!fullBuffer) {
-      fullBuffer = new Uint8Array(received);
-      let o = 0;
-      for (const chunk of chunks) {
-        fullBuffer.set(chunk, o);
-        o += chunk.length;
-      }
-      chunks = null;
+    const fullBuffer = new Uint8Array(received);
+    let o = 0;
+    for (const chunk of chunks) {
+      fullBuffer.set(chunk, o);
+      o += chunk.length;
     }
 
     if (cacheKey) {
@@ -502,14 +475,12 @@
         locateFile: (path) => 'wasm/' + path,
         arguments: ['--no-launcher', '--game', 'game.toml'],
         print: (text) => {
-          remoteLog('WASM_STDOUT', text);
           console.log('[Wasm]', text);
           if (text.includes('[FPS]') || text.includes('[GPU]') || text.includes('Running')) {
             bootOverlay.classList.add('hidden');
           }
         },
         printErr: (text) => {
-          remoteLog('WASM_STDERR', text);
           if (text.includes('[FPS]')) {
             const match = text.match(/\[FPS\]\s+game:\s+([\d.]+)\s+fps\s+\(([\d.]+)x\)/);
             if (match) {

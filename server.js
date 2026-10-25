@@ -39,16 +39,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && req.url === '/api/log') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => {
-      fs.appendFileSync(path.join(__dirname, 'browser.log'), body + '\n');
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('ok');
-    });
-    return;
-  }
 
   if (req.method === 'POST' && req.url.startsWith('/api/dump_frame')) {
     const parsed = new URL(req.url, 'http://localhost:3000');
