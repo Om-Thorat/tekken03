@@ -7,3 +7,4 @@ src_recomp/build*
 src_recomp/disc/
 roms/
 src_recomp/
+web/wasm/disc/*.bin
