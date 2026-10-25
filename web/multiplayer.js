@@ -167,9 +167,10 @@
       this.screen = 0;
       this.mode = 0;
 
-      // Deterministic Lockstep Synchronization (Option 1)
+      // Deterministic Lockstep Synchronization & Clock Pacing
       this.inputDelay = 2; // Symmetric 2-frame delay buffer (~33ms at 60Hz)
       this.fightFrame = 0;
+      this.peerFightFrame = 0;
       this.localStageReady = false;
       this.peerStageReady = false;
       this.fightActive = false;
@@ -368,13 +369,28 @@
                   return;
                 }
               } else {
+                // Adaptive Elastic Lockstep Pacing:
+                // Prevents fast machine from outrunning slow/throttled machine by > 2 frames
+                if (this.peerFightFrame > 0) {
+                  const lead = this.fightFrame - this.peerFightFrame;
+                  if (lead > 2) {
+                    // Local machine is running faster than peer (e.g. 34 FPS vs 21 FPS)
+                    // Micro-pause local frame advancement so peer catches up
+                    return;
+                  } else if (lead < -2) {
+                    // Local machine lagged behind peer; step extra catch-up cycle
+                    this.fightFrame++;
+                    this.processInputQueues();
+                  }
+                }
+
                 // Fight active: step logical frame and apply queued inputs
                 this.fightFrame++;
                 this.processInputQueues();
 
-                // Periodic frame sync heartbeat from host every 60 frames (~1 sec)
-                if (this.role === 'host' && (this.fightFrame % 60 === 0)) {
-                  this.conn.send({ type: 'frame_sync', hostFrame: this.fightFrame });
+                // High-frequency clock tick heartbeat every 10 frames (~160ms) to lock clocks together
+                if (this.fightFrame % 10 === 0) {
+                  this.conn.send({ type: 'clock_tick', f: this.fightFrame });
                 }
               }
             }
@@ -405,6 +421,7 @@
         this.localStageReady = false;
         this.peerStageReady = false;
         this.fightFrame = 0;
+        this.peerFightFrame = 0;
         this.localInputQueue = [];
         this.remoteInputQueue = [];
 
@@ -418,6 +435,7 @@
     startFight() {
       this.fightActive = true;
       this.fightFrame = 0;
+      this.peerFightFrame = 0;
       this.localInputQueue = [];
       this.remoteInputQueue = [];
       this.releaseAllInjectedKeys();
@@ -553,6 +571,7 @@
 
     createRoom(fromPrompt = false) {
       this.cleanupNetwork();
+      if (typeof window.ensureAudioKeepAlive === 'function') window.ensureAudioKeepAlive();
 
       const code = this.generateCode();
       const peerId = this.normalizePeerId(code);
@@ -566,7 +585,7 @@
         config: {
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' }
+            { urls: 'stun:global.stun.stunprotocol.org:3478' }
           ]
         }
       });
@@ -613,6 +632,10 @@
         if (!data) return;
         if (data.type === 'ping') {
           this.conn.send({ type: 'pong', t: data.t });
+        } else if (data.type === 'clock_tick') {
+          if (data.f !== undefined) {
+            this.peerFightFrame = data.f;
+          }
         } else if (data.type === 'in_vs_mode') {
           this.peerInVsMode = true;
           if (this.localInVsMode) {
@@ -628,6 +651,7 @@
           this.fightActive = false;
           this.localStageReady = false;
           this.peerStageReady = false;
+          this.peerFightFrame = 0;
           this.releaseAllInjectedKeys();
           this.updateHudStatus('PEER EXITED TO MENU', false);
           this.showRoomNotice('Player 2 left Versus Mode back to Main Menu.');
@@ -672,6 +696,7 @@
 
     joinRoom(rawCode) {
       this.cleanupNetwork();
+      if (typeof window.ensureAudioKeepAlive === 'function') window.ensureAudioKeepAlive();
 
       let code = rawCode.trim();
       if (code.includes('room=')) {
@@ -690,7 +715,7 @@
         config: {
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' }
+            { urls: 'stun:global.stun.stunprotocol.org:3478' }
           ]
         }
       });
@@ -736,6 +761,10 @@
             this.hudPing.textContent = `${this.ping} ms`;
             this.hudPing.className = `hud-ping ${this.ping < 50 ? 'good' : this.ping < 100 ? 'medium' : 'high'}`;
           }
+        } else if (data.type === 'clock_tick') {
+          if (data.f !== undefined) {
+            this.peerFightFrame = data.f;
+          }
         } else if (data.type === 'in_vs_mode') {
           this.peerInVsMode = true;
           if (this.localInVsMode) {
@@ -751,6 +780,7 @@
           this.fightActive = false;
           this.localStageReady = false;
           this.peerStageReady = false;
+          this.peerFightFrame = 0;
           this.releaseAllInjectedKeys();
           this.updateHudStatus('PEER EXITED TO MENU', false);
           this.showRoomNotice('Host left Versus Mode back to Main Menu.');
@@ -777,14 +807,6 @@
           if (data.btn) {
             const keys = (data.player === 1) ? P1_HOST_KEYS : P2_HOST_KEYS;
             if (keys[data.btn]) injectDOMKey(data.action, keys[data.btn]);
-          }
-        } else if (data.type === 'frame_sync') {
-          if (data.hostFrame !== undefined && this.fightActive) {
-            const diff = this.fightFrame - data.hostFrame;
-            if (Math.abs(diff) > 3) {
-              console.warn(`[Netplay Sync] Frame skew detected: Guest=${this.fightFrame}, Host=${data.hostFrame}. Aligning to host.`);
-              this.fightFrame = data.hostFrame;
-            }
           }
         }
       });
@@ -1082,6 +1104,7 @@
       this.localStageReady = false;
       this.peerStageReady = false;
       this.fightFrame = 0;
+      this.peerFightFrame = 0;
       this.localInputQueue = [];
       this.remoteInputQueue = [];
       this.prevGamepadState = {};

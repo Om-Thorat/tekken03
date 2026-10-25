@@ -20,7 +20,7 @@
       <line x1="3" y1="6" x2="21" y2="6"></line>
       <line x1="3" y1="18" x2="21" y2="18"></line>
     </svg>
-    <span class="drawer-toggle-badge">MENU</span>
+    <span class="drawer-toggle-badge">Menu</span>
   </button>
 
   <!-- Backdrop overlay when drawer is open -->
@@ -34,28 +34,14 @@
     </div>
 
     <div class="drawer-content">
-      <!-- Status Indicator -->
-      <div class="drawer-status-card">
-        <div class="status-indicator">
-          <span class="status-dot"></span>
-          <span id="wasmStatus">Engine: Standby</span>
-        </div>
-        <div class="status-indicator">
-          <span id="gamepadStatus">🎮 Keyboard Active</span>
-        </div>
-      </div>
-
       <!-- Settings -->
       <div class="drawer-section">
         <div class="section-title">Settings</div>
         <div class="drawer-actions-grid">
-          <button id="btnOnlineRoom" class="drawer-action-btn highlight-gold" type="button">⚔️ Online Match</button>
           <button id="btnAspect" class="drawer-action-btn" type="button">Aspect: 16:9</button>
           <button id="btnCrt" class="drawer-action-btn" type="button">CRT Scanlines</button>
           <button id="btnFps" class="drawer-action-btn active" type="button">FPS: On</button>
           <button id="btnFullscreen" class="drawer-action-btn" type="button">Fullscreen</button>
-          <button id="btnCustomRom" class="drawer-action-btn" type="button">Load Disc (.bin)</button>
-          <input type="file" id="fileInput" accept=".bin,.cue,.iso,.chd" style="display: none;">
         </div>
 
         <div class="volume-box">
@@ -165,6 +151,12 @@
     <canvas id="canvas" width="1280" height="720" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
     <canvas id="displayCanvas" width="1280" height="720" tabindex="1" oncontextmenu="event.preventDefault()"></canvas>
 
+    <!-- Room Linking Notice Banner (Floating Top) -->
+    <div id="roomNotice" class="room-notice-banner" style="display: none;">
+      <span id="roomNoticeText">Linked to Room // Select "VS Mode" in game to fight</span>
+      <button id="btnCancelNotice" class="notice-close-btn" type="button" title="Disconnect">✕</button>
+    </div>
+
     <!-- Realtime HUD FPS Badge (Top-Right) -->
     <div id="fpsBadge" class="fps-badge active">
       <span id="fpsVal" class="fps-val">--</span>
@@ -177,6 +169,7 @@
         <span class="hud-dot"></span>
         <span id="hudRole">P2 NETPLAY</span>
       </div>
+      <span id="hudModeStatus" class="hud-mode-status">VERSUS STANDBY</span>
       <span id="hudRoom" class="hud-room">ROOM: --</span>
       <span id="hudPing" class="hud-ping good">-- ms</span>
       <button id="btnDisconnect" class="hud-disconnect-btn" type="button" title="Disconnect">✕ Exit</button>
@@ -192,9 +185,6 @@
         <button id="btnStart" class="btn-outline" type="button">
           Play
         </button>
-        <button id="btnOnlineHero" class="btn-outline btn-online" type="button">
-          ⚔️ Online Match
-        </button>
       </div>
 
       <div id="progressBox" class="boot-progress-box">
@@ -209,69 +199,39 @@
     </div>
   </main>
 
-  <!-- Online Multiplayer Modal Dialog -->
-  <dialog id="onlineModal" class="online-modal">
-    <div class="modal-card">
-      <div class="modal-header">
-        <div class="modal-title">
-          <span class="modal-icon">⚔️</span>
-          <span>ONLINE MULTIPLAYER (LOCAL SIMULATION NETPLAY)</span>
-        </div>
-        <button id="modalClose" class="modal-close-btn" type="button" title="Close (Esc)">✕</button>
+  <!-- In-Game Versus Mode Prompt Dialog -->
+  <dialog id="vsModePrompt" class="vs-prompt-modal">
+    <div class="vs-prompt-card">
+      <div class="vs-prompt-header">
+        <span class="vs-prompt-title">Versus Mode</span>
+        <button id="btnPromptClose" class="vs-prompt-close" type="button" title="Close (Esc)">✕</button>
       </div>
 
-      <div class="modal-tabs">
-        <button id="tabHost" class="modal-tab active" type="button">Host Match (P1)</button>
-        <button id="tabJoin" class="modal-tab" type="button">Join Match (P2)</button>
+      <div id="promptMainActions" class="vs-prompt-actions">
+        <button id="btnPromptHost" class="btn-outline vs-btn" type="button">Host Match</button>
+        <button id="btnPromptJoin" class="btn-outline vs-btn" type="button">Join Match</button>
       </div>
 
-      <div class="modal-body">
-        <!-- HOST PANEL -->
-        <div id="panelHost" class="modal-panel active">
-          <p class="panel-desc">
-            Both players run the game locally at <b>100% native resolution (60 FPS WebGL)</b> with zero video blur. Controller inputs are synchronized via low-latency WebRTC.
-          </p>
-
-          <button id="btnCreateRoom" class="btn-neon-action" type="button">
-            Create Online Room
-          </button>
-
-          <div id="hostRoomBox" class="host-room-box" style="display: none;">
-            <div class="room-code-label">SHARE ROOM CODE OR LINK</div>
-            <div class="room-code-display">
-              <span id="hostRoomCode">TK3-XXXX</span>
-              <button id="btnCopyLink" class="btn-copy-link" type="button">Copy Link</button>
-            </div>
-            <div id="hostStatus" class="host-status-text">🟡 Waiting for Player 2 to join...</div>
-
-            <button id="hostStartBtn" class="btn-start-match" type="button" style="display: none;">
-              Launch Match Now
-            </button>
-          </div>
+      <!-- HOST SUBPANEL -->
+      <div id="promptHostBox" class="prompt-subbox" style="display: none;">
+        <div class="subbox-label">Room Code</div>
+        <div class="room-code-display">
+          <span id="promptRoomCode">TK3-XXXX</span>
+          <button id="btnPromptCopyLink" class="btn-outline vs-sub-btn" type="button">Copy Link</button>
         </div>
-
-        <!-- JOIN PANEL -->
-        <div id="panelJoin" class="modal-panel">
-          <p class="panel-desc">
-            Join a friend's hosted room. The engine runs locally on your device with synchronized inputs for razor-sharp 1080p 60 FPS fighting action.
-          </p>
-
-          <div class="join-input-group">
-            <input id="joinRoomInput" type="text" placeholder="Enter Room Code (e.g. TK3-4A9B) or Paste Link" class="join-input" autocomplete="off" spellcheck="false">
-            <button id="btnJoinRoom" class="btn-neon-action" type="button">
-              Join Match
-            </button>
-          </div>
-
-          <div id="joinStatus" class="join-status-text">Standby</div>
-        </div>
+        <div id="promptHostStatus" class="subbox-status">Waiting for Player 2 to join...</div>
+        <button id="btnPromptCancelHost" class="vs-btn-back" type="button">Cancel</button>
       </div>
 
-      <div class="modal-footer">
-        <div class="p2-quick-guide">
-          <span class="guide-title">🎮 Player 2 Controls:</span>
-          <span><b>Move:</b> Arrow Keys or WASD &bull; <b>Punches:</b> J (□) / K (△) or Z / A &bull; <b>Kicks:</b> M (✕) / , (○) or X / S &bull; <b>Gamepad:</b> Any USB/Bluetooth controller works automatically</span>
+      <!-- JOIN SUBPANEL -->
+      <div id="promptJoinBox" class="prompt-subbox" style="display: none;">
+        <div class="subbox-label">Enter Room Code or Link</div>
+        <div class="join-input-group">
+          <input id="promptJoinInput" type="text" placeholder="TK3-XXXX" class="join-input" autocomplete="off" spellcheck="false">
+          <button id="btnPromptConnect" class="btn-outline vs-sub-btn" type="button">Connect</button>
         </div>
+        <div id="promptJoinStatus" class="subbox-status">Standby</div>
+        <button id="btnPromptCancelJoin" class="vs-btn-back" type="button">Cancel</button>
       </div>
     </div>
   </dialog>

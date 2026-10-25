@@ -177,8 +177,12 @@
   let cachedU8Offset = 0;
   let cachedU8Len = 0;
 
-  window.tekkenDrawFrame = function (heapU32, ptr, w, h) {
+  window.tekkenDrawFrame = function (heapU32, ptr, w, h, screen, mode) {
     if (!w || !h || !heapU32 || !displayCanvas) return;
+
+    if (window.tekkenMultiplayer && typeof window.tekkenMultiplayer.onEngineFrame === 'function') {
+      window.tekkenMultiplayer.onEngineFrame(screen, mode);
+    }
 
     if (gl) {
       // GPU DIRECT PATH: Zero CPU loop, zero GC, BGR->RGB swizzle in hardware shader (<0.15ms)
@@ -420,7 +424,7 @@
     window.__isTekkenRunning = true;
 
     btnStart.style.display = 'none';
-    btnCustomRom.style.display = 'none';
+    if (btnCustomRom) btnCustomRom.style.display = 'none';
     progressBox.classList.add('active');
 
     try {
@@ -469,7 +473,7 @@
       }
 
       // 4. Initialize Emscripten Module
-      wasmStatus.textContent = 'Engine: Initializing Wasm & Workers...';
+      if (wasmStatus) wasmStatus.textContent = 'Engine: Initializing Wasm & Workers...';
       wasmInstance = await createTekkenModule({
         canvas: canvas,
         mainScriptUrlOrBlob: 'wasm/Tekken_3_Recompiled.js',
@@ -484,7 +488,7 @@
         printErr: (text) => {
           if (text.includes('[FPS]')) {
             const match = text.match(/\[FPS\]\s+game:\s+([\d.]+)\s+fps\s+\(([\d.]+)x\)/);
-            if (match) {
+            if (match && wasmStatus) {
               wasmStatus.textContent = `Engine: ${match[1]} FPS (${match[2]}x)`;
             }
             bootOverlay.classList.add('hidden');
@@ -562,7 +566,7 @@
         ],
         onRuntimeInitialized: () => {
           console.log('[Tekken Web] Wasm runtime initialized');
-          wasmStatus.textContent = 'Engine: Running (60 FPS)';
+          if (wasmStatus) wasmStatus.textContent = 'Engine: Running (60 FPS)';
           const dot = document.querySelector('.status-dot');
           if (dot) dot.classList.add('active');
           bootOverlay.classList.add('hidden');
@@ -642,9 +646,7 @@
     }
   });
 
-  // Event Listeners
-  btnStart.addEventListener('click', () => {
-    closeDrawer();
+  function ensureAudioKeepAlive() {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (AudioCtx) {
@@ -654,8 +656,26 @@
         if (window.__tekkenAudioCtx.state === 'suspended') {
           window.__tekkenAudioCtx.resume();
         }
+        // Continuous near-silent tone flags page as active media player,
+        // completely preventing Chrome from throttling background/unfocused tabs to ~20 FPS.
+        if (!window.__tekkenKeepAliveNode) {
+          const osc = window.__tekkenAudioCtx.createOscillator();
+          const gain = window.__tekkenAudioCtx.createGain();
+          gain.gain.value = 0.00001; // virtually silent, active audio stream
+          osc.connect(gain);
+          gain.connect(window.__tekkenAudioCtx.destination);
+          osc.start();
+          window.__tekkenKeepAliveNode = osc;
+        }
       }
     } catch (e) {}
+  }
+  window.ensureAudioKeepAlive = ensureAudioKeepAlive;
+
+  // Event Listeners
+  btnStart.addEventListener('click', () => {
+    closeDrawer();
+    ensureAudioKeepAlive();
     bootTekken();
   });
 
@@ -725,12 +745,12 @@
       const gp = gamepads[i];
       if (gp && gp.connected) {
         connected = true;
-        gamepadStatus.textContent = `🎮 Pad 1: ${gp.id.split('(')[0].trim()}`;
+        if (gamepadStatus) gamepadStatus.textContent = `🎮 Pad 1: ${gp.id.split('(')[0].trim()}`;
         break;
       }
     }
     if (!connected) {
-      gamepadStatus.textContent = '🎮 Keyboard Active';
+      if (gamepadStatus) gamepadStatus.textContent = '🎮 Keyboard Active';
     }
     requestAnimationFrame(pollGamepads);
   }
