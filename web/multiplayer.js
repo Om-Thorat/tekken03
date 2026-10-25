@@ -1,40 +1,43 @@
 /**
- * Tekken 3 Web Edition - WebRTC P2P Multiplayer (Remote Play Together)
- * Allows two players across the internet to play Tekken 3 without server setup:
- * - Host (Player 1) runs the game engine and streams 60fps canvas + stereo audio.
- * - Guest (Player 2) connects via room code/link, receives stream, and sends inputs.
+ * Tekken 3 Web Edition - True Local Simulation Netplay (Dual-Instance Input Sync)
+ * 
+ * In this mode, BOTH players run the full game engine locally on their own machines:
+ * - 100% native resolution, sharp WebGL rendering, 60 FPS, zero video blur.
+ * - Native stereo audio generated locally on both ends.
+ * - Extremely lightweight WebRTC DataChannel exchanges only controller input packets.
+ * - P1 inputs are mirrored on P2's local engine; P2 inputs are mirrored on P1's local engine.
  */
 
 (() => {
   'use strict';
 
-  // Audio interception: clone audio directed to speakers into WebRTC stream
-  if (typeof AudioNode !== 'undefined') {
-    const origConnect = AudioNode.prototype.connect;
-    AudioNode.prototype.connect = function (target, ...args) {
-      try {
-        if (target && this.context && target === this.context.destination) {
-          if (!this.context.__tekkenStreamDest) {
-            this.context.__tekkenStreamDest = this.context.createMediaStreamDestination();
-          }
-          origConnect.call(this, this.context.__tekkenStreamDest);
-        }
-      } catch (e) {}
-      return origConnect.call(this, target, ...args);
-    };
-  }
+  // Exact scan codes expected by PSXRecomp's default keybinds
+  const P1_HOST_KEYS = {
+    UP:     { code: 'ArrowUp', key: 'ArrowUp', keyCode: 38 },
+    DOWN:   { code: 'ArrowDown', key: 'ArrowDown', keyCode: 40 },
+    LEFT:   { code: 'ArrowLeft', key: 'ArrowLeft', keyCode: 37 },
+    RIGHT:  { code: 'ArrowRight', key: 'ArrowRight', keyCode: 39 },
+    LP:     { code: 'KeyZ', key: 'z', keyCode: 90 },       // Left Punch (Square)
+    RP:     { code: 'KeyA', key: 'a', keyCode: 65 },       // Right Punch (Triangle)
+    LK:     { code: 'KeyX', key: 'x', keyCode: 88 },       // Left Kick (Cross)
+    RK:     { code: 'KeyS', key: 's', keyCode: 83 },       // Right Kick (Circle)
+    L1:     { code: 'KeyQ', key: 'q', keyCode: 81 },
+    L2:     { code: 'KeyE', key: 'e', keyCode: 69 },
+    R1:     { code: 'KeyW', key: 'w', keyCode: 87 },
+    R2:     { code: 'KeyR', key: 'r', keyCode: 82 },
+    START:  { code: 'Enter', key: 'Enter', keyCode: 13 },
+    SELECT: { code: 'ShiftRight', key: 'Shift', keyCode: 16 }
+  };
 
-  // Player 2 Key Bindings Translation Table for Host Emscripten
-  // These are the exact scan codes expected by PSXRecomp's default player2 keybinds:
   const P2_HOST_KEYS = {
     UP:     { code: 'KeyI', key: 'i', keyCode: 73 },
     DOWN:   { code: 'KeyK', key: 'k', keyCode: 75 },
     LEFT:   { code: 'KeyJ', key: 'j', keyCode: 74 },
     RIGHT:  { code: 'KeyL', key: 'l', keyCode: 76 },
-    LP:     { code: 'Numpad4', key: '4', keyCode: 100 }, // Left Punch (Square)
-    RP:     { code: 'Numpad5', key: '5', keyCode: 101 }, // Right Punch (Triangle)
-    LK:     { code: 'Numpad1', key: '1', keyCode: 97 },  // Left Kick (Cross)
-    RK:     { code: 'Numpad2', key: '2', keyCode: 98 },  // Right Kick (Circle)
+    LP:     { code: 'Numpad4', key: '4', keyCode: 100 },
+    RP:     { code: 'Numpad5', key: '5', keyCode: 101 },
+    LK:     { code: 'Numpad1', key: '1', keyCode: 97 },
+    RK:     { code: 'Numpad2', key: '2', keyCode: 98 },
     L1:     { code: 'KeyU', key: 'u', keyCode: 85 },
     L2:     { code: 'Numpad7', key: '7', keyCode: 103 },
     R1:     { code: 'KeyO', key: 'o', keyCode: 79 },
@@ -43,57 +46,62 @@
     SELECT: { code: 'Backspace', key: 'Backspace', keyCode: 8 }
   };
 
-  // Keyboard Mapping on Guest side (supports standard WASD or Arrows + Attack layout)
-  const GUEST_KEY_MAP = {
-    // Movement (WASD or Arrows)
+  // Keyboard mapping for P1's physical keys
+  const P1_PHYSICAL_KEYS = {
     'ArrowUp': 'UP',
-    'KeyW': 'UP',
     'ArrowDown': 'DOWN',
-    'KeyS': 'DOWN',
     'ArrowLeft': 'LEFT',
-    'KeyA': 'LEFT',
     'ArrowRight': 'RIGHT',
-    'KeyD': 'RIGHT',
-
-    // Attacks (Right hand layout: J/K/M/, or Z/X/A/S or Numpad 4/5/1/2)
     'KeyZ': 'LP',
-    'Numpad4': 'LP',
-    'KeyJ': 'LP',
-
     'KeyA': 'RP',
-    'Numpad5': 'RP',
-    'KeyI': 'RP',
-    'KeyK': 'RP',
-
     'KeyX': 'LK',
-    'Numpad1': 'LK',
-    'KeyM': 'LK',
-    'KeyN': 'LK',
-
     'KeyS': 'RK',
-    'Numpad2': 'RK',
-    'Comma': 'RK',
-    'Period': 'RK',
-
-    // Triggers
     'KeyQ': 'L1',
-    'KeyU': 'L1',
     'KeyE': 'L2',
-    'Numpad7': 'L2',
-    'KeyR': 'R1',
-    'KeyO': 'R1',
-    'KeyT': 'R2',
-    'Numpad9': 'R2',
-
-    // Menu
+    'KeyW': 'R1',
+    'KeyR': 'R2',
     'Enter': 'START',
+    'ShiftRight': 'SELECT'
+  };
+
+  // Keyboard mapping for P2's physical keys (allows P2 to use standard WASD / Arrows + attack keys)
+  const P2_PHYSICAL_KEYS = {
+    // Movement: WASD or Arrows
+    'KeyW': 'UP',
+    'ArrowUp': 'UP',
+    'KeyS': 'DOWN',
+    'ArrowDown': 'DOWN',
+    'KeyA': 'LEFT',
+    'ArrowLeft': 'LEFT',
+    'KeyD': 'RIGHT',
+    'ArrowRight': 'RIGHT',
+
+    // Direct P2 Numpad / IJKL bindings
+    'KeyI': 'UP',
+    'KeyK': 'DOWN',
+    'KeyJ': 'LEFT',
+    'KeyL': 'RIGHT',
+    'Numpad4': 'LP',
+    'Numpad5': 'RP',
+    'Numpad1': 'LK',
+    'Numpad2': 'RK',
+    'KeyU': 'L1',
+    'KeyO': 'R1',
+    'Numpad7': 'L2',
+    'Numpad9': 'R2',
     'NumpadEnter': 'START',
-    'ShiftRight': 'SELECT',
-    'ShiftLeft': 'SELECT',
+
+    // Fighting layout for P2 on normal keyboards (J/K/M/, or Z/X/A/S)
+    'KeyZ': 'LP',
+    'KeyA': 'RP',
+    'KeyX': 'LK',
+    'KeyS': 'RK',
+    'KeyQ': 'L1',
+    'KeyE': 'L2',
     'Backspace': 'SELECT'
   };
 
-  // Standard Gamepad to P2 Virtual Button Map
+  // Standard Gamepad button map
   const GAMEPAD_BUTTON_MAP = {
     0: 'LK',     // Cross / A
     1: 'RK',     // Circle / B
@@ -111,11 +119,26 @@
     15: 'RIGHT'  // D-Pad Right
   };
 
+  function injectDOMKey(action, keyDef) {
+    const target = document.getElementById('displayCanvas') || document.getElementById('canvas') || window;
+    const evt = new KeyboardEvent(action, {
+      code: keyDef.code,
+      key: keyDef.key,
+      keyCode: keyDef.keyCode,
+      which: keyDef.keyCode,
+      bubbles: true,
+      cancelable: true
+    });
+    target.dispatchEvent(evt);
+    if (target !== window) {
+      window.dispatchEvent(evt);
+    }
+  }
+
   class TekkenMultiplayer {
     constructor() {
       this.peer = null;
       this.conn = null;
-      this.call = null;
       this.role = null; // 'host' | 'guest'
       this.roomId = null;
       this.ping = 0;
@@ -150,7 +173,6 @@
       this.btnJoinRoom = document.getElementById('btnJoinRoom');
       this.joinStatus = document.getElementById('joinStatus');
 
-      this.remoteVideo = document.getElementById('remoteVideo');
       this.multiplayerHud = document.getElementById('multiplayerHud');
       this.hudRole = document.getElementById('hudRole');
       this.hudPing = document.getElementById('hudPing');
@@ -169,10 +191,7 @@
 
       if (this.btnCreateRoom) this.btnCreateRoom.addEventListener('click', () => this.createRoom());
       if (this.btnCopyLink) this.btnCopyLink.addEventListener('click', () => this.copyRoomLink());
-      if (this.hostStartBtn) this.hostStartBtn.addEventListener('click', () => {
-        this.closeModal();
-        if (typeof window.bootTekken === 'function') window.bootTekken();
-      });
+      if (this.hostStartBtn) this.hostStartBtn.addEventListener('click', () => this.startSynchronizedMatch());
 
       if (this.btnJoinRoom) this.btnJoinRoom.addEventListener('click', () => {
         const val = this.joinRoomInput.value.trim();
@@ -190,13 +209,12 @@
 
       if (this.btnDisconnect) this.btnDisconnect.addEventListener('click', () => this.disconnect());
 
-      // Keyboard listener on window for guest
-      window.addEventListener('keydown', (e) => this.handleGuestKeyEvent(e));
-      window.addEventListener('keyup', (e) => this.handleGuestKeyEvent(e));
+      // Global keyboard listeners for input synchronization
+      window.addEventListener('keydown', (e) => this.handleLocalKeyEvent(e));
+      window.addEventListener('keyup', (e) => this.handleLocalKeyEvent(e));
     }
 
     initHashListener() {
-      // Check if opened with #room=TK3-XXXX
       const hash = window.location.hash;
       if (hash && hash.includes('room=')) {
         const match = hash.match(/room=([a-zA-Z0-9_-]+)/);
@@ -253,11 +271,11 @@
     }
 
     normalizePeerId(code) {
-      return 'tekken3-web-' + code.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return 'tekken3-netplay-' + code.toLowerCase().replace(/[^a-z0-9]/g, '');
     }
 
     /* =========================================================================
-       HOST FLOW
+       HOST FLOW (PLAYER 1)
        ========================================================================= */
 
     createRoom() {
@@ -269,10 +287,9 @@
       this.role = 'host';
       this.roomId = code;
 
-      this.hostStatus.textContent = 'Initializing P2P Room...';
+      this.hostStatus.textContent = '🟡 Connecting to Netplay lobby...';
       this.btnCreateRoom.disabled = true;
 
-      // Connect to PeerJS cloud server
       this.peer = new Peer(peerId, {
         debug: 1,
         config: {
@@ -283,51 +300,45 @@
         }
       });
 
-      this.peer.on('open', (id) => {
+      this.peer.on('open', () => {
         this.hostStatus.textContent = '🟡 Waiting for Player 2 to join...';
         this.hostRoomBox.style.display = 'block';
         this.hostRoomCode.textContent = code;
         this.btnCreateRoom.disabled = false;
         this.btnCreateRoom.textContent = 'Regenerate Room';
-        this.hostStartBtn.style.display = 'inline-flex';
+        this.hostStartBtn.style.display = 'none';
       });
 
       this.peer.on('error', (err) => {
-        console.warn('[P2P Host Error]', err);
+        console.warn('[Netplay Host Error]', err);
         if (err.type === 'unavailable-id') {
-          // Retry with new code
           setTimeout(() => this.createRoom(), 500);
         } else {
-          this.hostStatus.textContent = `❌ Connection Error: ${err.type || err.message}`;
+          this.hostStatus.textContent = `❌ Error: ${err.type || err.message}`;
           this.btnCreateRoom.disabled = false;
         }
       });
 
-      // When Guest connects DataChannel
       this.peer.on('connection', (conn) => {
         this.conn = conn;
-        this.setupHostDataChannel();
+        this.setupHostConnection();
       });
     }
 
-    setupHostDataChannel() {
+    setupHostConnection() {
       this.conn.on('open', () => {
-        console.log('[P2P Host] Player 2 DataChannel connected!');
+        console.log('[Netplay Host] Player 2 connected!');
         this.connected = true;
-        this.hostStatus.innerHTML = '<span style="color:#00e5ff">🟢 Player 2 Connected! Streaming match...</span>';
-        this.updateHud('HOST (P1)', this.roomId, 'Connected');
+        this.hostStatus.innerHTML = '<span style="color:#00e5ff">🟢 Player 2 Connected! Ready for battle.</span>';
+        this.hostStartBtn.style.display = 'inline-flex';
+        this.updateHud('HOST (P1)', this.roomId);
 
-        // Capture video + audio stream from canvas and audio context
-        const stream = this.captureHostStream();
-        if (stream) {
-          console.log('[P2P Host] Calling Player 2 with media stream...');
-          this.call = this.peer.call(this.conn.peer, stream);
-          this.call.on('error', (e) => console.warn('[P2P Call Error]', e));
-        }
+        this.startPingLoop();
+        this.startGamepadLoop();
 
-        // Auto-boot game if host hasn't started yet
-        if (typeof window.bootTekken === 'function') {
-          window.bootTekken();
+        // If Host already has the game running, inform guest to launch immediately
+        if (window.__isTekkenRunning) {
+          this.conn.send({ type: 'start_game' });
         }
       });
 
@@ -335,79 +346,41 @@
         if (!data) return;
         if (data.type === 'ping') {
           this.conn.send({ type: 'pong', t: data.t });
-        } else if (data.type === 'p2_input') {
-          this.injectHostInput(data);
+        } else if (data.type === 'input') {
+          // P2 input received from remote -> inject into Host's local game on P2 port
+          if (data.player === 2 && P2_HOST_KEYS[data.btn]) {
+            injectDOMKey(data.action, P2_HOST_KEYS[data.btn]);
+          }
         }
       });
 
       this.conn.on('close', () => {
-        console.log('[P2P Host] Player 2 disconnected');
+        console.log('[Netplay Host] Player 2 disconnected');
         this.connected = false;
         this.hostStatus.textContent = '🟡 Player 2 left. Waiting for challenger...';
-        this.updateHud('HOST (P1)', this.roomId, 'Waiting...');
+        this.updateHud('HOST (P1)', this.roomId);
+        this.hostStartBtn.style.display = 'none';
       });
     }
 
-    captureHostStream() {
-      const displayCanvas = document.getElementById('displayCanvas') || document.getElementById('canvas');
-      if (!displayCanvas) return null;
-
-      let stream = null;
-      try {
-        stream = displayCanvas.captureStream(60);
-      } catch (e) {
-        console.warn('[P2P] captureStream failed:', e);
-        return null;
+    startSynchronizedMatch() {
+      if (this.conn && this.conn.open) {
+        this.conn.send({ type: 'start_game' });
       }
-
-      // Add audio track if available
-      try {
-        const audioCtx = window.__tekkenAudioCtx || (window.Module?.SDL2?.audioContext);
-        if (audioCtx && audioCtx.__tekkenStreamDest) {
-          const audioTrack = audioCtx.__tekkenStreamDest.stream.getAudioTracks()[0];
-          if (audioTrack) {
-            stream.addTrack(audioTrack);
-            console.log('[P2P Host] Attached stereo audio track to WebRTC stream');
-          }
-        }
-      } catch (e) {
-        console.warn('[P2P Host] Audio track attachment warning:', e);
-      }
-
-      return stream;
-    }
-
-    injectHostInput(data) {
-      const { action, code, key, keyCode } = data;
-      const target = document.getElementById('displayCanvas') || document.getElementById('canvas') || window;
-
-      const eventInit = {
-        code: code,
-        key: key,
-        keyCode: keyCode,
-        which: keyCode,
-        bubbles: true,
-        cancelable: true
-      };
-
-      try {
-        const evt = new KeyboardEvent(action, eventInit);
-        target.dispatchEvent(evt);
-        if (target !== window) window.dispatchEvent(evt);
-      } catch (e) {
-        console.warn('[P2P Host] Input injection error:', e);
+      this.closeModal();
+      if (typeof window.bootTekken === 'function') {
+        window.bootTekken();
       }
     }
 
     /* =========================================================================
-       GUEST FLOW
+       GUEST FLOW (PLAYER 2)
        ========================================================================= */
 
     joinRoom(rawCode) {
       if (this.peer) this.peer.destroy();
       this.disconnect();
 
-      // Clean input: extract room code if full URL was pasted
       let code = rawCode.trim();
       if (code.includes('room=')) {
         const m = code.match(/room=([a-zA-Z0-9_-]+)/);
@@ -431,58 +404,40 @@
         }
       });
 
-      this.peer.on('open', (id) => {
-        this.joinStatus.textContent = '🟡 Establishing P2P link with Host...';
+      this.peer.on('open', () => {
+        this.joinStatus.textContent = '🟡 Linking with Host room...';
         this.conn = this.peer.connect(hostPeerId, {
-          reliable: false // low-latency UDP mode for fighting game input
+          reliable: false // UDP-style low latency for 60Hz fighting game inputs
         });
 
-        this.setupGuestDataChannel();
-      });
-
-      // When Host calls with video/audio stream
-      this.peer.on('call', (call) => {
-        console.log('[P2P Guest] Incoming media stream from Host!');
-        this.call = call;
-        call.answer(); // Answer without sending local stream
-
-        call.on('stream', (remoteStream) => {
-          console.log('[P2P Guest] Received remote media stream!');
-          this.remoteVideo.srcObject = remoteStream;
-          this.remoteVideo.classList.add('active');
-          this.remoteVideo.play().catch(console.warn);
-
-          // Hide local boot overlay and standby text
-          const bootOverlay = document.getElementById('bootOverlay');
-          if (bootOverlay) bootOverlay.classList.add('hidden');
-
-          this.closeModal();
-          this.updateHud('GUEST (P2)', this.roomId, 'Match Active');
-        });
-
-        call.on('error', (err) => console.warn('[P2P Guest Call Error]', err));
+        this.setupGuestConnection();
       });
 
       this.peer.on('error', (err) => {
-        console.warn('[P2P Guest Error]', err);
+        console.warn('[Netplay Guest Error]', err);
         this.joinStatus.textContent = `❌ Failed to connect: ${err.type || err.message}`;
         this.btnJoinRoom.disabled = false;
       });
     }
 
-    setupGuestDataChannel() {
+    setupGuestConnection() {
       this.conn.on('open', () => {
-        console.log('[P2P Guest] Connected to Host DataChannel!');
+        console.log('[Netplay Guest] Connected to Host!');
         this.connected = true;
         this.btnJoinRoom.disabled = false;
-        this.joinStatus.innerHTML = '<span style="color:#00e5ff">🟢 Connected! Receiving game stream...</span>';
-        this.updateHud('GUEST (P2)', this.roomId, 'Connected');
+        this.joinStatus.innerHTML = '<span style="color:#00e5ff">🟢 Connected to Player 1! Starting local engine...</span>';
+        this.updateHud('CHALLENGER (P2)', this.roomId);
 
-        // Start measuring Ping
         this.startPingLoop();
-
-        // Start Gamepad polling
         this.startGamepadLoop();
+
+        // Boot local engine so Guest runs the exact same game at native 60 FPS
+        setTimeout(() => {
+          this.closeModal();
+          if (typeof window.bootTekken === 'function') {
+            window.bootTekken();
+          }
+        }, 500);
       });
 
       this.conn.on('data', (data) => {
@@ -494,14 +449,135 @@
             this.hudPing.textContent = `${this.ping} ms`;
             this.hudPing.className = `hud-ping ${this.ping < 50 ? 'good' : this.ping < 100 ? 'medium' : 'high'}`;
           }
+        } else if (data.type === 'start_game') {
+          this.closeModal();
+          if (typeof window.bootTekken === 'function') {
+            window.bootTekken();
+          }
+        } else if (data.type === 'input') {
+          // P1 input received from Host -> inject into Guest's local game on P1 port
+          if (data.player === 1 && P1_HOST_KEYS[data.btn]) {
+            injectDOMKey(data.action, P1_HOST_KEYS[data.btn]);
+          }
         }
       });
 
       this.conn.on('close', () => {
-        console.log('[P2P Guest] Host disconnected');
+        console.log('[Netplay Guest] Host disconnected');
         this.disconnect();
-        alert('Host ended the match or disconnected.');
+        alert('Match ended: Player 1 disconnected.');
       });
+    }
+
+    /* =========================================================================
+       INPUT SYNCHRONIZATION (DUAL LOCAL SIMULATION)
+       ========================================================================= */
+
+    handleLocalKeyEvent(e) {
+      if (!this.connected || !this.conn || !this.conn.open) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      if (this.role === 'host') {
+        // Player 1 on Host:
+        // When P1 presses their physical key, let it naturally trigger P1 locally,
+        // and send the event to P2 over the network!
+        const btn = P1_PHYSICAL_KEYS[e.code];
+        if (btn) {
+          this.conn.send({
+            type: 'input',
+            player: 1,
+            action: e.type,
+            btn: btn
+          });
+        }
+      } else if (this.role === 'guest') {
+        // Player 2 on Guest:
+        // P2 uses comfortable physical keys (WASD, Arrows, Z/X/A/S, etc.)
+        const btn = P2_PHYSICAL_KEYS[e.code];
+        if (btn) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          // 1. Inject locally into P2's controller port on Guest's engine
+          injectDOMKey(e.type, P2_HOST_KEYS[btn]);
+
+          // 2. Transmit to Host so Host's engine also moves P2!
+          this.conn.send({
+            type: 'input',
+            player: 2,
+            action: e.type,
+            btn: btn
+          });
+        }
+      }
+    }
+
+    startGamepadLoop() {
+      if (this.gamepadPollInterval) clearInterval(this.gamepadPollInterval);
+
+      this.gamepadPollInterval = setInterval(() => {
+        if (!this.connected || !this.conn || !this.conn.open) return;
+
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        if (!gamepads || !gamepads[0]) return;
+        const gp = gamepads[0];
+
+        // Button polling
+        for (let bIndex = 0; bIndex < gp.buttons.length; bIndex++) {
+          const pressed = gp.buttons[bIndex].pressed;
+          const wasPressed = !!this.prevGamepadState[`b_${bIndex}`];
+
+          if (pressed !== wasPressed) {
+            this.prevGamepadState[`b_${bIndex}`] = pressed;
+            const virtualBtn = GAMEPAD_BUTTON_MAP[bIndex];
+            if (virtualBtn) {
+              const action = pressed ? 'keydown' : 'keyup';
+              this.handleGamepadButton(virtualBtn, action);
+            }
+          }
+        }
+
+        // D-Pad / Left Stick Analog
+        const axX = gp.axes[0] || 0;
+        const axY = gp.axes[1] || 0;
+        const DEADZONE = 0.4;
+
+        this.checkGamepadAxis('axis_up', axY < -DEADZONE, 'UP');
+        this.checkGamepadAxis('axis_down', axY > DEADZONE, 'DOWN');
+        this.checkGamepadAxis('axis_left', axX < -DEADZONE, 'LEFT');
+        this.checkGamepadAxis('axis_right', axX > DEADZONE, 'RIGHT');
+
+      }, 1000 / 60); // 60Hz input sync loop
+    }
+
+    checkGamepadAxis(key, active, virtualBtn) {
+      const wasActive = !!this.prevGamepadState[key];
+      if (active !== wasActive) {
+        this.prevGamepadState[key] = active;
+        const action = active ? 'keydown' : 'keyup';
+        this.handleGamepadButton(virtualBtn, action);
+      }
+    }
+
+    handleGamepadButton(btn, action) {
+      if (this.role === 'host') {
+        // P1 gamepad input -> send to P2
+        this.conn.send({
+          type: 'input',
+          player: 1,
+          action: action,
+          btn: btn
+        });
+      } else if (this.role === 'guest') {
+        // P2 gamepad input -> inject locally for P2 + send to Host
+        injectDOMKey(action, P2_HOST_KEYS[btn]);
+        this.conn.send({
+          type: 'input',
+          player: 2,
+          action: action,
+          btn: btn
+        });
+      }
     }
 
     startPingLoop() {
@@ -511,80 +587,6 @@
           this.conn.send({ type: 'ping', t: Date.now() });
         }
       }, 1000);
-    }
-
-    startGamepadLoop() {
-      if (this.gamepadPollInterval) clearInterval(this.gamepadPollInterval);
-
-      this.gamepadPollInterval = setInterval(() => {
-        if (this.role !== 'guest' || !this.connected) return;
-
-        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-        if (!gamepads || !gamepads[0]) return;
-        const gp = gamepads[0];
-
-        // Check Buttons
-        for (let bIndex = 0; bIndex < gp.buttons.length; bIndex++) {
-          const pressed = gp.buttons[bIndex].pressed;
-          const wasPressed = !!this.prevGamepadState[`b_${bIndex}`];
-
-          if (pressed !== wasPressed) {
-            this.prevGamepadState[`b_${bIndex}`] = pressed;
-            const virtualBtn = GAMEPAD_BUTTON_MAP[bIndex];
-            if (virtualBtn) {
-              this.sendVirtualP2Key(virtualBtn, pressed ? 'keydown' : 'keyup');
-            }
-          }
-        }
-
-        // Check D-Pad Analog Stick (Axes 0 & 1)
-        const axX = gp.axes[0] || 0;
-        const axY = gp.axes[1] || 0;
-        const DEADZONE = 0.4;
-
-        const up = axY < -DEADZONE;
-        const down = axY > DEADZONE;
-        const left = axX < -DEADZONE;
-        const right = axX > DEADZONE;
-
-        this.checkAxisState('axis_up', up, 'UP');
-        this.checkAxisState('axis_down', down, 'DOWN');
-        this.checkAxisState('axis_left', left, 'LEFT');
-        this.checkAxisState('axis_right', right, 'RIGHT');
-
-      }, 1000 / 60); // 60Hz input polling
-    }
-
-    checkAxisState(key, active, virtualBtn) {
-      const wasActive = !!this.prevGamepadState[key];
-      if (active !== wasActive) {
-        this.prevGamepadState[key] = active;
-        this.sendVirtualP2Key(virtualBtn, active ? 'keydown' : 'keyup');
-      }
-    }
-
-    handleGuestKeyEvent(e) {
-      if (this.role !== 'guest' || !this.connected) return;
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
-      const virtualBtn = GUEST_KEY_MAP[e.code];
-      if (virtualBtn) {
-        e.preventDefault();
-        this.sendVirtualP2Key(virtualBtn, e.type);
-      }
-    }
-
-    sendVirtualP2Key(virtualBtn, action) {
-      const hostKey = P2_HOST_KEYS[virtualBtn];
-      if (!hostKey || !this.conn || !this.conn.open) return;
-
-      this.conn.send({
-        type: 'p2_input',
-        action: action,
-        code: hostKey.code,
-        key: hostKey.key,
-        keyCode: hostKey.keyCode
-      });
     }
 
     copyRoomLink() {
@@ -600,7 +602,7 @@
       });
     }
 
-    updateHud(roleText, roomCode, statusText) {
+    updateHud(roleText, roomCode) {
       if (this.multiplayerHud) {
         this.multiplayerHud.classList.add('active');
         if (this.hudRole) this.hudRole.textContent = roleText;
@@ -612,10 +614,6 @@
       if (this.pingInterval) clearInterval(this.pingInterval);
       if (this.gamepadPollInterval) clearInterval(this.gamepadPollInterval);
 
-      if (this.call) {
-        try { this.call.close(); } catch (e) {}
-        this.call = null;
-      }
       if (this.conn) {
         try { this.conn.close(); } catch (e) {}
         this.conn = null;
@@ -623,11 +621,6 @@
       if (this.peer) {
         try { this.peer.destroy(); } catch (e) {}
         this.peer = null;
-      }
-
-      if (this.remoteVideo) {
-        this.remoteVideo.srcObject = null;
-        this.remoteVideo.classList.remove('active');
       }
 
       if (this.multiplayerHud) {

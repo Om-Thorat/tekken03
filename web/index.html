@@ -165,9 +165,6 @@
     <canvas id="canvas" width="1280" height="720" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
     <canvas id="displayCanvas" width="1280" height="720" tabindex="1" oncontextmenu="event.preventDefault()"></canvas>
 
-    <!-- P2 Remote Play Video Stream -->
-    <video id="remoteVideo" class="remote-video" autoplay playsinline></video>
-
     <!-- Realtime HUD FPS Badge (Top-Right) -->
     <div id="fpsBadge" class="fps-badge active">
       <span id="fpsVal" class="fps-val">--</span>
@@ -178,7 +175,7 @@
     <div id="multiplayerHud" class="multiplayer-hud">
       <div class="hud-status-badge">
         <span class="hud-dot"></span>
-        <span id="hudRole">P2 REMOTE</span>
+        <span id="hudRole">P2 NETPLAY</span>
       </div>
       <span id="hudRoom" class="hud-room">ROOM: --</span>
       <span id="hudPing" class="hud-ping good">-- ms</span>
@@ -218,7 +215,7 @@
       <div class="modal-header">
         <div class="modal-title">
           <span class="modal-icon">⚔️</span>
-          <span>ONLINE MULTIPLAYER (P2P NETPLAY)</span>
+          <span>ONLINE MULTIPLAYER (LOCAL SIMULATION NETPLAY)</span>
         </div>
         <button id="modalClose" class="modal-close-btn" type="button" title="Close (Esc)">✕</button>
       </div>
@@ -232,7 +229,7 @@
         <!-- HOST PANEL -->
         <div id="panelHost" class="modal-panel active">
           <p class="panel-desc">
-            Host a match in your browser. A friend connects directly via a private WebRTC peer-to-peer room with 60 FPS video & zero server lag.
+            Both players run the game locally at <b>100% native resolution (60 FPS WebGL)</b> with zero video blur. Controller inputs are synchronized via low-latency WebRTC.
           </p>
 
           <button id="btnCreateRoom" class="btn-neon-action" type="button">
@@ -256,7 +253,7 @@
         <!-- JOIN PANEL -->
         <div id="panelJoin" class="modal-panel">
           <p class="panel-desc">
-            Join a friend's hosted room as Player 2. Streams smooth 60 FPS video & audio with responsive fighting controls. No ROM download required!
+            Join a friend's hosted room. The engine runs locally on your device with synchronized inputs for razor-sharp 1080p 60 FPS fighting action.
           </p>
 
           <div class="join-input-group">
