@@ -180,9 +180,6 @@
   window.tekkenDrawFrame = function (heapU32, ptr, w, h, screen, mode) {
     if (!w || !h || !heapU32 || !displayCanvas) return;
 
-    if (window.tekkenMultiplayer && typeof window.tekkenMultiplayer.onEngineFrame === 'function') {
-      window.tekkenMultiplayer.onEngineFrame(screen, mode);
-    }
 
     if (gl) {
       // GPU DIRECT PATH: Zero CPU loop, zero GC, BGR->RGB swizzle in hardware shader (<0.15ms)

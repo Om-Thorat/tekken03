@@ -301,9 +301,10 @@
       this.mode = m;
 
       // In Tekken 3:
+      // Mode 1 (0x800afa88 == 1) is VS MODE.
       // Screen 4 is Main Menu, Screen 0 is Boot/Intro.
       // Screen 9 = Character Select, 10 = Team Select, 11 = Loading stage, 8 = In-Fight.
-      const isVsMode = (s !== 4 && s !== 0);
+      const isVsMode = (m === 1 && s !== 4 && s !== 0);
 
       if (isVsMode) {
         this.localInVsMode = true;
@@ -331,6 +332,7 @@
                 this.localStageReady = false;
                 this.peerStageReady = false;
                 this.fightFrame = 0;
+                this.peerFightFrame = 0;
                 this.localInputQueue = [];
                 this.remoteInputQueue = [];
                 this.releaseAllInjectedKeys();
@@ -343,13 +345,14 @@
                 this.localStageReady = false;
                 this.peerStageReady = false;
                 this.fightFrame = 0;
+                this.peerFightFrame = 0;
                 this.localInputQueue = [];
                 this.remoteInputQueue = [];
                 this.releaseAllInjectedKeys();
               }
               this.updateHudStatus('LOADING STAGE...', true);
             } else if (s === 8) {
-              // Battle Screen: Stage Ready Barrier & Deterministic Frame Lockstep
+              // Battle Screen: Stage Ready Barrier
               if (!this.localStageReady) {
                 this.localStageReady = true;
                 this.conn.send({ type: 'stage_ready', screen: 8 });
@@ -369,28 +372,19 @@
                   return;
                 }
               } else {
-                // Adaptive Elastic Lockstep Pacing:
-                // Prevents fast machine from outrunning slow/throttled machine by > 2 frames
-                if (this.peerFightFrame > 0) {
-                  const lead = this.fightFrame - this.peerFightFrame;
-                  if (lead > 2) {
-                    // Local machine is running faster than peer (e.g. 34 FPS vs 21 FPS)
-                    // Micro-pause local frame advancement so peer catches up
-                    return;
-                  } else if (lead < -2) {
-                    // Local machine lagged behind peer; step extra catch-up cycle
-                    this.fightFrame++;
-                    this.processInputQueues();
-                  }
-                }
-
-                // Fight active: step logical frame and apply queued inputs
+                // Fight active: step logical frame and apply queued inputs every single frame
                 this.fightFrame++;
                 this.processInputQueues();
 
-                // High-frequency clock tick heartbeat every 10 frames (~160ms) to lock clocks together
-                if (this.fightFrame % 10 === 0) {
+                // Periodic clock tick heartbeat every 15 frames (~250ms)
+                if (this.fightFrame % 15 === 0) {
                   this.conn.send({ type: 'clock_tick', f: this.fightFrame });
+                }
+
+                // If local engine lagged behind peer by > 3 frames, step extra catch-up cycle
+                if (this.peerFightFrame > 0 && (this.fightFrame - this.peerFightFrame < -3)) {
+                  this.fightFrame++;
+                  this.processInputQueues();
                 }
               }
             }
@@ -676,7 +670,7 @@
             }
           }
         } else if (data.type === 'input' || data.type === 'menu_input') {
-          if (data.btn) {
+          if (this.versusActive && data.btn) {
             const keys = (data.player === 1) ? P1_HOST_KEYS : P2_HOST_KEYS;
             if (keys[data.btn]) injectDOMKey(data.action, keys[data.btn]);
           }
@@ -804,7 +798,7 @@
             }
           }
         } else if (data.type === 'input' || data.type === 'menu_input') {
-          if (data.btn) {
+          if (this.versusActive && data.btn) {
             const keys = (data.player === 1) ? P1_HOST_KEYS : P2_HOST_KEYS;
             if (keys[data.btn]) injectDOMKey(data.action, keys[data.btn]);
           }
@@ -830,9 +824,13 @@
       // 2. If not connected to any peer, single-player keyboard works 100% normally
       if (!this.connected || !this.conn || !this.conn.open) return;
 
-      // 3. DROP OS KEY REPEAT FLOODING (Netplay only transmits key down/up transitions)
+      // 3. If NOT in Versus Mode, single-player keyboard works 100% normally for both players!
+      // This allows both Host and Guest to freely navigate their own menus to select "VS MODE".
+      if (!this.versusActive || !this.localInVsMode) return;
+
+      // 4. DROP OS KEY REPEAT FLOODING (Netplay only transmits key down/up transitions)
       if (e.repeat) {
-        if (this.role === 'guest' && (this.screen !== 4 && this.screen !== 0)) {
+        if (this.role === 'guest') {
           e.preventDefault();
           e.stopPropagation();
           e.stopImmediatePropagation();
@@ -840,7 +838,7 @@
         return;
       }
 
-      // 4. In Stage Loading (screen 11), mute all inputs
+      // 5. In Stage Loading (screen 11), mute all inputs
       if (this.screen === 11) {
         e.preventDefault();
         e.stopPropagation();
@@ -848,14 +846,8 @@
         return;
       }
 
-      // 5. GUEST (PLAYER 2) INPUT ROUTING:
+      // 6. GUEST (PLAYER 2) INPUT ROUTING IN VERSUS MODE:
       if (this.role === 'guest') {
-        // While at Main Menu / Boot (screen 4 or 0), let Guest navigate menu to select VS Mode
-        if (this.screen === 4 || this.screen === 0) {
-          return;
-        }
-
-        // EVERYWHERE ELSE (Character Select 9, Battle 8, etc.):
         // UNCONDITIONALLY intercept physical keys so they NEVER leak into Player 1!
         e.preventDefault();
         e.stopPropagation();
