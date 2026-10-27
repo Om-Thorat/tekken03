@@ -179,6 +179,9 @@
 
   window.tekkenDrawFrame = function (heapU32, ptr, w, h, screen, mode) {
     if (!w || !h || !heapU32 || !displayCanvas) return;
+    if (!window.tekkenWasmBuffer || window.tekkenWasmBuffer !== heapU32.buffer) {
+      window.tekkenWasmBuffer = heapU32.buffer;
+    }
 
 
     if (gl) {
@@ -571,6 +574,11 @@
       });
       window.wasmInstance = wasmInstance;
       window.Module = wasmInstance;
+      if (wasmInstance && wasmInstance.wasmMemory && wasmInstance.wasmMemory.buffer) {
+        window.tekkenWasmBuffer = wasmInstance.wasmMemory.buffer;
+      } else if (wasmInstance && wasmInstance.HEAPU32 && wasmInstance.HEAPU32.buffer) {
+        window.tekkenWasmBuffer = wasmInstance.HEAPU32.buffer;
+      }
 
       canvas.focus();
     } catch (err) {

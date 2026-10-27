@@ -12,10 +12,36 @@
 (() => {
   'use strict';
 
+  // Tekken 3 PSX Main RAM Actor & World Offsets
+  const P1_ACTOR_OFFSET = 0x0a9228; // 0x800a9228 & 0x1fffff
+  const P2_ACTOR_OFFSET = 0x0aaab4; // 0x800aaab4 & 0x1fffff
+  const MATCH_TIMER_OFFSET = 0x11863c; // 0x8011863c & 0x1fffff
+
+  function getWasmBuffer() {
+    if (window.tekkenWasmBuffer) return window.tekkenWasmBuffer;
+    if (window.wasmInstance && window.wasmInstance.wasmMemory && window.wasmInstance.wasmMemory.buffer) {
+      window.tekkenWasmBuffer = window.wasmInstance.wasmMemory.buffer;
+      return window.tekkenWasmBuffer;
+    }
+    if (window.wasmInstance && window.wasmInstance.HEAPU32 && window.wasmInstance.HEAPU32.buffer) {
+      window.tekkenWasmBuffer = window.wasmInstance.HEAPU32.buffer;
+      return window.tekkenWasmBuffer;
+    }
+    if (window.Module && window.Module.wasmMemory && window.Module.wasmMemory.buffer) {
+      window.tekkenWasmBuffer = window.Module.wasmMemory.buffer;
+      return window.tekkenWasmBuffer;
+    }
+    if (window.Module && window.Module.HEAPU32 && window.Module.HEAPU32.buffer) {
+      window.tekkenWasmBuffer = window.Module.HEAPU32.buffer;
+      return window.tekkenWasmBuffer;
+    }
+    return null;
+  }
+
   // Global engine hook invoked on every 60Hz frame swap by C runtime (gpu_gl_renderer.c)
-  window.tekkenOnEngineFrame = (screen, mode) => {
+  window.tekkenOnEngineFrame = (screen, mode, ramPtr, camYaw) => {
     if (window.tekkenMultiplayer && typeof window.tekkenMultiplayer.onEngineFrame === 'function') {
-      window.tekkenMultiplayer.onEngineFrame(screen, mode);
+      window.tekkenMultiplayer.onEngineFrame(screen, mode, ramPtr, camYaw);
     }
   };
 
@@ -210,6 +236,8 @@
       this.fightActive = false;
       this.localInputQueue = [];
       this.remoteInputQueue = [];
+      this.ramPtr = 0;
+      this.camYaw = 0;
 
       this.initDom();
       this.initHashListener();
@@ -331,11 +359,13 @@
        ENGINE FRAME HOOK (SCREEN & MODE STATE MACHINE)
        ========================================================================= */
 
-    onEngineFrame(screen, mode) {
+    onEngineFrame(screen, mode, ramPtr, camYaw) {
       const s = screen & 0xffff;
       const m = mode & 0xff;
       this.screen = s;
       this.mode = m;
+      if (ramPtr !== undefined && ramPtr !== null) this.ramPtr = ramPtr;
+      if (camYaw !== undefined && camYaw !== null) this.camYaw = camYaw;
 
       // In Tekken 3:
       // Mode 1 (0x800afa88 == 1) is VS MODE.
@@ -416,6 +446,11 @@
                 // Periodic clock tick heartbeat every 15 frames (~250ms)
                 if (this.fightFrame % 15 === 0) {
                   this.conn.send({ type: 'clock_tick', f: this.fightFrame });
+                }
+
+                // Authoritative Host Combat State Sync Heartbeat every 60 frames (~1.0s)
+                if (this.role === 'host' && this.fightFrame % 60 === 0 && this.fightFrame > 0) {
+                  this.sendCombatSync();
                 }
 
                 // If local engine lagged behind peer by > 3 frames, step extra catch-up cycle
@@ -513,6 +548,105 @@
           const keys = (item.player === 1) ? P1_HOST_KEYS : P2_HOST_KEYS;
           if (keys[item.btn]) injectDOMKey(item.action, keys[item.btn]);
         }
+      }
+    }
+
+    sendCombatSync() {
+      if (!this.connected || !this.conn || !this.conn.open) return;
+      const buf = getWasmBuffer();
+      if (!buf || this.ramPtr === undefined || this.ramPtr === null) return;
+
+      try {
+        const dv = new DataView(buf, this.ramPtr, 0x200000);
+        // P1 state: [x, y, z, facing, side, yaw, relYaw, camAngle, hp]
+        const p1 = [
+          dv.getInt32(P1_ACTOR_OFFSET + 0x00, true),
+          dv.getInt32(P1_ACTOR_OFFSET + 0x04, true),
+          dv.getInt32(P1_ACTOR_OFFSET + 0x08, true),
+          dv.getUint16(P1_ACTOR_OFFSET + 0x0e, true),
+          dv.getUint16(P1_ACTOR_OFFSET + 0x12, true),
+          dv.getUint16(P1_ACTOR_OFFSET + 0x2c, true),
+          dv.getInt16(P1_ACTOR_OFFSET + 0x2e, true),
+          dv.getInt16(P1_ACTOR_OFFSET + 0x30, true),
+          dv.getInt32(P1_ACTOR_OFFSET + 0x3f4, true)
+        ];
+
+        // P2 state: [x, y, z, facing, side, yaw, relYaw, camAngle, hp]
+        const p2 = [
+          dv.getInt32(P2_ACTOR_OFFSET + 0x00, true),
+          dv.getInt32(P2_ACTOR_OFFSET + 0x04, true),
+          dv.getInt32(P2_ACTOR_OFFSET + 0x08, true),
+          dv.getUint16(P2_ACTOR_OFFSET + 0x0e, true),
+          dv.getUint16(P2_ACTOR_OFFSET + 0x12, true),
+          dv.getUint16(P2_ACTOR_OFFSET + 0x2c, true),
+          dv.getInt16(P2_ACTOR_OFFSET + 0x2e, true),
+          dv.getInt16(P2_ACTOR_OFFSET + 0x30, true),
+          dv.getInt32(P2_ACTOR_OFFSET + 0x3f4, true)
+        ];
+
+        const timer = dv.getUint32(MATCH_TIMER_OFFSET, true);
+        const cam = this.camYaw || 0;
+
+        this.conn.send({
+          type: 'combat_sync',
+          f: this.fightFrame,
+          p1,
+          p2,
+          timer,
+          cam
+        });
+      } catch (err) {
+        console.warn('[Netplay] Error reading combat sync from RAM:', err);
+      }
+    }
+
+    applyCombatSync(data) {
+      if (this.role !== 'guest') return;
+      if (!this.fightActive || this.screen !== 8) return;
+      if (!data || !Array.isArray(data.p1) || !Array.isArray(data.p2)) return;
+
+      const buf = getWasmBuffer();
+      if (!buf || this.ramPtr === undefined || this.ramPtr === null) return;
+
+      try {
+        const dv = new DataView(buf, this.ramPtr, 0x200000);
+
+        // Synchronize P1 state
+        dv.setInt32(P1_ACTOR_OFFSET + 0x00, data.p1[0], true);
+        dv.setInt32(P1_ACTOR_OFFSET + 0x04, data.p1[1], true);
+        dv.setInt32(P1_ACTOR_OFFSET + 0x08, data.p1[2], true);
+        dv.setUint16(P1_ACTOR_OFFSET + 0x0e, data.p1[3], true);
+        dv.setUint16(P1_ACTOR_OFFSET + 0x12, data.p1[4], true);
+        dv.setUint16(P1_ACTOR_OFFSET + 0x2c, data.p1[5], true);
+        dv.setInt16(P1_ACTOR_OFFSET + 0x2e, data.p1[6], true);
+        dv.setInt16(P1_ACTOR_OFFSET + 0x30, data.p1[7], true);
+        dv.setInt32(P1_ACTOR_OFFSET + 0x3f4, data.p1[8], true);
+
+        // Synchronize P2 state
+        dv.setInt32(P2_ACTOR_OFFSET + 0x00, data.p2[0], true);
+        dv.setInt32(P2_ACTOR_OFFSET + 0x04, data.p2[1], true);
+        dv.setInt32(P2_ACTOR_OFFSET + 0x08, data.p2[2], true);
+        dv.setUint16(P2_ACTOR_OFFSET + 0x0e, data.p2[3], true);
+        dv.setUint16(P2_ACTOR_OFFSET + 0x12, data.p2[4], true);
+        dv.setUint16(P2_ACTOR_OFFSET + 0x2c, data.p2[5], true);
+        dv.setInt16(P2_ACTOR_OFFSET + 0x2e, data.p2[6], true);
+        dv.setInt16(P2_ACTOR_OFFSET + 0x30, data.p2[7], true);
+        dv.setInt32(P2_ACTOR_OFFSET + 0x3f4, data.p2[8], true);
+
+        // Synchronize countdown timer
+        if (data.timer !== undefined) {
+          dv.setUint32(MATCH_TIMER_OFFSET, data.timer, true);
+        }
+
+        // Align peer fight frame
+        if (data.f !== undefined) {
+          this.peerFightFrame = data.f;
+          if (Math.abs(this.fightFrame - data.f) > 3) {
+            this.fightFrame = data.f;
+          }
+        }
+      } catch (err) {
+        console.warn('[Netplay] Error applying combat sync to RAM:', err);
       }
     }
 
@@ -672,6 +806,8 @@
           if (data.f !== undefined) {
             this.peerFightFrame = data.f;
           }
+        } else if (data.type === 'combat_sync') {
+          // Host is authoritative; no-op
         } else if (data.type === 'in_vs_mode') {
           this.peerInVsMode = true;
           if (this.localInVsMode) {
@@ -871,6 +1007,8 @@
           if (data.f !== undefined) {
             this.peerFightFrame = data.f;
           }
+        } else if (data.type === 'combat_sync') {
+          this.applyCombatSync(data);
         } else if (data.type === 'in_vs_mode') {
           this.peerInVsMode = true;
           if (this.localInVsMode) {
