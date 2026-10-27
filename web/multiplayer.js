@@ -17,6 +17,17 @@
   const P2_ACTOR_OFFSET = 0x0aaab4; // 0x800aaab4 & 0x1fffff
   const MATCH_TIMER_OFFSET = 0x11863c; // 0x8011863c & 0x1fffff
 
+  // Tekken 3 PSX Main RAM Camera & 3D Projection Offsets
+  const CAM_PITCH_OFFSET = 0x098564; // 0x80098564 & 0x1fffff: Camera pitch angle
+  const CAM_YAW_OFFSET = 0x098568; // 0x80098568 & 0x1fffff: Camera yaw angle (0..65535)
+  const CAM_DELTA_OFFSET = 0x09856c; // 0x8009856c & 0x1fffff: Camera rotational delta per frame
+  const CAM_TIMER_OFFSET = 0x098570; // 0x80098570 & 0x1fffff: Camera frame timer
+  const CAM_0_STRUCT_OFFSET = 0x0a0328; // 0x800a0328 & 0x1fffff: Camera 0 combat view struct
+  const CAM_MODE_OFFSET = 0x0a04c6; // 0x800a04c6 & 0x1fffff: Camera battle event/mode
+  const CAM_CTRL_TRACK_OFFSET = 0x0a8ca0; // 0x800a8ca0 & 0x1fffff: Camera tracking mode flag
+  const CAM_CTRL_TARGET_OFFSET = 0x0a8cd4; // 0x800a8cd4 & 0x1fffff: Camera focal target
+  const CAM_CTRL_ANGLE_OFFSET = 0x0a8cdc; // 0x800a8cdc & 0x1fffff: Camera angle controller
+
   function getWasmBuffer() {
     if (window.Module && window.Module.HEAPU8 && window.Module.HEAPU8.buffer) {
       return window.Module.HEAPU8.buffer;
@@ -338,6 +349,8 @@
       this.remoteInputQueue = [];
       this.ramPtr = 0;
       this.camYaw = 0;
+      this.lastHostCamYaw = undefined;
+      this.lastHostCamPitch = undefined;
 
       // Continuous 60Hz Frame Input Sync & Live State Tracking
       this.heldButtons = new Set();
@@ -541,7 +554,18 @@
                 }
 
                 if (this.role === 'host') {
-                  this.conn.send({ type: 'start_fight', startFrame: 0 });
+                  let initCam = this.camYaw || 0;
+                  let initPitch = 0;
+                  const buf = getWasmBuffer();
+                  if (buf && this.ramPtr !== undefined && this.ramPtr !== null && this.ramPtr >= 0) {
+                    try {
+                      const dv = new DataView(buf, this.ramPtr, 0x200000);
+                      const ramYaw = dv.getInt32(CAM_YAW_OFFSET, true);
+                      if (ramYaw !== 0) initCam = ramYaw;
+                      initPitch = dv.getInt32(CAM_PITCH_OFFSET, true);
+                    } catch (e) {}
+                  }
+                  this.conn.send({ type: 'start_fight', startFrame: 0, cam: initCam, pitch: initPitch });
                   this.startFight();
                   return;
                 } else {
@@ -554,19 +578,63 @@
               this.fightFrame++;
               this.processInputQueues();
 
-              // Continuous 60Hz per-frame held input state transmission
+              // Continuous 60Hz per-frame held input state and camera sync transmission
               if (this.heldButtons) {
-                this.conn.send({
+                let hostCamYaw = this.camYaw || 0;
+                let hostCamPitch = 0;
+                if (this.role === 'host') {
+                  const buf = getWasmBuffer();
+                  if (buf && this.ramPtr !== undefined && this.ramPtr !== null && this.ramPtr >= 0) {
+                    try {
+                      const dv = new DataView(buf, this.ramPtr, 0x200000);
+                      const ramYaw = dv.getInt32(CAM_YAW_OFFSET, true);
+                      if (ramYaw !== 0) hostCamYaw = ramYaw;
+                      hostCamPitch = dv.getInt32(CAM_PITCH_OFFSET, true);
+                    } catch (e) {}
+                  }
+                }
+                const inputPacket = {
                   type: 'frame_input',
                   f: this.fightFrame,
                   player: (this.role === 'host' ? 1 : 2),
                   btns: Array.from(this.heldButtons)
-                });
+                };
+                if (this.role === 'host') {
+                  inputPacket.cam = hostCamYaw;
+                  inputPacket.pitch = hostCamPitch;
+                }
+                this.conn.send(inputPacket);
+              }
+
+              // Guest: clamp local PSX RAM camera to Host authoritative yaw on every engine frame
+              if (this.role === 'guest' && this.lastHostCamYaw !== undefined) {
+                const buf = getWasmBuffer();
+                if (buf && this.ramPtr !== undefined && this.ramPtr !== null && this.ramPtr >= 0) {
+                  try {
+                    const dv = new DataView(buf, this.ramPtr, 0x200000);
+                    dv.setInt32(CAM_YAW_OFFSET, this.lastHostCamYaw, true);
+                    dv.setInt32(CAM_DELTA_OFFSET, 0, true);
+                    if (this.lastHostCamPitch !== undefined) {
+                      dv.setInt32(CAM_PITCH_OFFSET, this.lastHostCamPitch, true);
+                    }
+                  } catch (e) {}
+                }
               }
 
               // Host repeats start_fight heartbeat during first 10 frames until Guest ACKs
               if (this.role === 'host' && !this.guestFightAck && this.fightFrame <= 10) {
-                this.conn.send({ type: 'start_fight', startFrame: 0 });
+                let initCam = this.camYaw || 0;
+                let initPitch = 0;
+                const buf = getWasmBuffer();
+                if (buf && this.ramPtr !== undefined && this.ramPtr !== null && this.ramPtr >= 0) {
+                  try {
+                    const dv = new DataView(buf, this.ramPtr, 0x200000);
+                    const ramYaw = dv.getInt32(CAM_YAW_OFFSET, true);
+                    if (ramYaw !== 0) initCam = ramYaw;
+                    initPitch = dv.getInt32(CAM_PITCH_OFFSET, true);
+                  } catch (e) {}
+                }
+                this.conn.send({ type: 'start_fight', startFrame: 0, cam: initCam, pitch: initPitch });
               }
 
               // Periodic clock tick heartbeat every 15 frames (~250ms)
@@ -574,8 +642,8 @@
                 this.conn.send({ type: 'clock_tick', f: this.fightFrame });
               }
 
-              // Authoritative Host Combat State Sync Heartbeat every 60 frames (~1.0s)
-              if (this.role === 'host' && this.fightFrame % 60 === 0 && this.fightFrame > 0) {
+              // Authoritative Host Combat State Sync Heartbeat on frame 1 and every 15 frames (~250ms)
+              if (this.role === 'host' && (this.fightFrame === 1 || this.fightFrame % 15 === 0) && this.fightFrame > 0) {
                 this.sendCombatSync();
               }
 
@@ -652,6 +720,8 @@
       if (this.heldButtons) this.heldButtons.clear();
       if (this.remoteHeldButtons) this.remoteHeldButtons.clear();
       this.releaseAllInjectedKeys();
+      this.lastHostCamYaw = undefined;
+      this.lastHostCamPitch = undefined;
       this.updateSyncBadge(false);
     }
 
@@ -748,7 +818,22 @@
         ];
 
         const timer = dv.getUint32(MATCH_TIMER_OFFSET, true);
-        const cam = this.camYaw || 0;
+        const camYawVal = (this.camYaw !== undefined && this.camYaw !== null && this.camYaw !== 0)
+          ? this.camYaw
+          : dv.getInt32(CAM_YAW_OFFSET, true);
+        const cam = {
+          yaw: camYawVal,
+          pitch: dv.getInt32(CAM_PITCH_OFFSET, true),
+          delta: dv.getInt32(CAM_DELTA_OFFSET, true),
+          timer: dv.getInt32(CAM_TIMER_OFFSET, true),
+          ctrlAngle: dv.getInt16(CAM_CTRL_ANGLE_OFFSET, true),
+          ctrlTarget: dv.getInt16(CAM_CTRL_TARGET_OFFSET, true),
+          ctrlTrack: dv.getInt32(CAM_CTRL_TRACK_OFFSET, true),
+          mode: dv.getUint16(CAM_MODE_OFFSET, true),
+          c36: dv.getInt32(CAM_0_STRUCT_OFFSET + 36, true),
+          c40: dv.getInt32(CAM_0_STRUCT_OFFSET + 40, true),
+          c44: dv.getInt32(CAM_0_STRUCT_OFFSET + 44, true)
+        };
 
         this.conn.send({
           type: 'combat_sync',
@@ -762,7 +847,7 @@
         this.syncCount = (this.syncCount || 0) + 1;
         this.updateSyncBadge(true, true);
         if (this.syncCount % 3 === 0) {
-          console.log(`[Netplay Sync] Frame ${this.fightFrame}: Sent state sync #${this.syncCount} (P1 HP: ${p1[8]}, P2 HP: ${p2[8]})`);
+          console.log(`[Netplay Sync] Frame ${this.fightFrame}: Sent state sync #${this.syncCount} (P1 HP: ${p1[8]}, P2 HP: ${p2[8]}, Cam Yaw: ${cam.yaw})`);
         }
       } catch (err) {
         console.warn('[Netplay] Error reading combat sync from RAM:', err);
@@ -805,6 +890,34 @@
         // Synchronize countdown timer
         if (data.timer !== undefined) {
           dv.setUint32(MATCH_TIMER_OFFSET, data.timer, true);
+        }
+
+        // Synchronize 3D combat camera (yaw, pitch, tracking, target, timer)
+        if (data.cam !== undefined && data.cam !== null) {
+          if (typeof data.cam === 'object') {
+            if (data.cam.yaw !== undefined) {
+              dv.setInt32(CAM_YAW_OFFSET, data.cam.yaw, true);
+              this.lastHostCamYaw = data.cam.yaw;
+            }
+            if (data.cam.pitch !== undefined) {
+              dv.setInt32(CAM_PITCH_OFFSET, data.cam.pitch, true);
+              this.lastHostCamPitch = data.cam.pitch;
+            }
+            // Lock rotational delta to 0 on Guest so Guest camera cannot rotate away from Host
+            dv.setInt32(CAM_DELTA_OFFSET, 0, true);
+            if (data.cam.timer !== undefined) dv.setInt32(CAM_TIMER_OFFSET, data.cam.timer, true);
+            if (data.cam.ctrlAngle !== undefined) dv.setInt16(CAM_CTRL_ANGLE_OFFSET, data.cam.ctrlAngle, true);
+            if (data.cam.ctrlTarget !== undefined) dv.setInt16(CAM_CTRL_TARGET_OFFSET, data.cam.ctrlTarget, true);
+            if (data.cam.ctrlTrack !== undefined) dv.setInt32(CAM_CTRL_TRACK_OFFSET, data.cam.ctrlTrack, true);
+            if (data.cam.mode !== undefined) dv.setUint16(CAM_MODE_OFFSET, data.cam.mode, true);
+            if (data.cam.c36 !== undefined) dv.setInt32(CAM_0_STRUCT_OFFSET + 36, data.cam.c36, true);
+            if (data.cam.c40 !== undefined) dv.setInt32(CAM_0_STRUCT_OFFSET + 40, data.cam.c40, true);
+            if (data.cam.c44 !== undefined) dv.setInt32(CAM_0_STRUCT_OFFSET + 44, data.cam.c44, true);
+          } else if (typeof data.cam === 'number') {
+            dv.setInt32(CAM_YAW_OFFSET, data.cam, true);
+            dv.setInt32(CAM_DELTA_OFFSET, 0, true);
+            this.lastHostCamYaw = data.cam;
+          }
         }
 
         // Align peer fight frame
@@ -1325,10 +1438,37 @@
           this.peerStageReady = true;
           this.localStageReady = true;
           this.conn.send({ type: 'fight_ack' });
+          if (data.cam !== undefined) {
+            this.lastHostCamYaw = (typeof data.cam === 'object') ? data.cam.yaw : data.cam;
+            if (data.pitch !== undefined) this.lastHostCamPitch = data.pitch;
+            else if (typeof data.cam === 'object' && data.cam.pitch !== undefined) this.lastHostCamPitch = data.cam.pitch;
+            const buf = getWasmBuffer();
+            if (buf && this.ramPtr !== undefined && this.ramPtr !== null && this.ramPtr >= 0) {
+              try {
+                const dv = new DataView(buf, this.ramPtr, 0x200000);
+                dv.setInt32(CAM_YAW_OFFSET, this.lastHostCamYaw, true);
+                dv.setInt32(CAM_DELTA_OFFSET, 0, true);
+                if (this.lastHostCamPitch !== undefined) dv.setInt32(CAM_PITCH_OFFSET, this.lastHostCamPitch, true);
+              } catch (e) {}
+            }
+          }
           if (!this.fightActive) {
             this.startFight();
           }
         } else if (data.type === 'frame_input') {
+          if (data.cam !== undefined) {
+            this.lastHostCamYaw = data.cam;
+            if (data.pitch !== undefined) this.lastHostCamPitch = data.pitch;
+            const buf = getWasmBuffer();
+            if (buf && this.ramPtr !== undefined && this.ramPtr !== null && this.ramPtr >= 0) {
+              try {
+                const dv = new DataView(buf, this.ramPtr, 0x200000);
+                dv.setInt32(CAM_YAW_OFFSET, data.cam, true);
+                dv.setInt32(CAM_DELTA_OFFSET, 0, true);
+                if (data.pitch !== undefined) dv.setInt32(CAM_PITCH_OFFSET, data.pitch, true);
+              } catch (e) {}
+            }
+          }
           if (this.fightActive && Array.isArray(data.btns)) {
             const remoteKeys = P1_HOST_KEYS;
             const incoming = new Set(data.btns);
