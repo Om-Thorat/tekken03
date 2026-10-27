@@ -624,8 +624,8 @@
                 }
               }
 
-              // Host repeats start_fight heartbeat during first 10 frames until Guest ACKs
-              if (this.role === 'host' && !this.guestFightAck && this.fightFrame <= 10) {
+              // Host repeats start_fight heartbeat every 15 frames until Guest ACKs
+              if (this.role === 'host' && !this.guestFightAck && (this.fightFrame <= 10 || this.fightFrame % 15 === 0)) {
                 let initCam = this.camYaw || 0;
                 let initPitch = 0;
                 let initRngSeed = 0x12345678;
@@ -865,8 +865,20 @@
 
     applyCombatSync(data) {
       if (this.role !== 'guest') return;
-      if (!this.fightActive || this.screen !== 8) return;
+      if (this.screen !== 8) return;
       if (!data || !Array.isArray(data.p1) || !Array.isArray(data.p2)) return;
+
+      // Fail-safe: if Guest was awaiting host and receives combat_sync, immediately engage fight
+      if (!this.fightActive) {
+        console.log('[Netplay Guest] Incoming combat_sync unlocked fightActive barrier!');
+        this.startFight();
+        if (data.f !== undefined && data.f > 0) {
+          this.fightFrame = data.f;
+        }
+        if (this.conn && this.conn.open) {
+          this.conn.send({ type: 'fight_ack' });
+        }
+      }
 
       const buf = getWasmBuffer();
       if (!buf || this.ramPtr === undefined || this.ramPtr === null || this.ramPtr < 0) return;
@@ -1478,6 +1490,11 @@
             this.startFight();
           }
         } else if (data.type === 'frame_input') {
+          if (this.role === 'guest' && this.screen === 8 && !this.fightActive) {
+            this.startFight();
+            if (data.f !== undefined && data.f > 0) this.fightFrame = data.f;
+            if (this.conn && this.conn.open) this.conn.send({ type: 'fight_ack' });
+          }
           if (data.cam !== undefined) {
             this.lastHostCamYaw = data.cam;
             if (data.pitch !== undefined) this.lastHostCamPitch = data.pitch;
