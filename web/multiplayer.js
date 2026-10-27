@@ -150,16 +150,7 @@
     15: 'RIGHT'  // D-Pad Right
   };
 
-  // Comprehensive, multi-tiered STUN & TURN fallback relays.
-  // 1. Google Anycast STUN cluster across ports 19302 and 19305
-  // 2. Cloudflare Global Edge STUN (stun:stun.cloudflare.com:3478)
-  // 3. Mozilla STUN (stun:stun.services.mozilla.com:3478)
-  // 4. Protocol standard STUN (stun:global.stun.stunprotocol.org:3478)
-  // 5. Port 443 STUN for networks blocking UDP 3478/19302 (stun:stun.nextcloud.com:443)
-  // 6. Metered OpenRelay Primary Pool (UDP/TCP on 80 & 443 & 3478, and encrypted TURNS on 443 & 5349)
-  // 7. Metered Standard Relay Secondary Pool (UDP/TCP on 80 & 443 & 3478, and encrypted TURNS on 443 & 5349)
-  // 8. PeerJS Cloud Free TURN relays (UDP 3478)
-  // 9. Custom user-injected ICE servers via window.TEKKEN_CUSTOM_ICE_SERVERS or localStorage('tekken_ice_servers')
+  // Robust WebRTC ICE Servers (STUN for direct LAN/P2P + Official OpenRelay for Symmetric NAT)
   function getEffectiveIceConfig() {
     const defaultIceServers = [
       // Direct LAN / WAN STUN reflexive candidate discovery
@@ -168,68 +159,22 @@
           'stun:stun.l.google.com:19302',
           'stun:stun1.l.google.com:19302',
           'stun:stun2.l.google.com:19302',
-          'stun:stun3.l.google.com:19302',
-          'stun:stun4.l.google.com:19302',
-          'stun:stun.l.google.com:19305',
-          'stun:stun1.l.google.com:19305',
-          'stun:stun2.l.google.com:19305',
-          'stun:stun3.l.google.com:19305',
-          'stun:stun4.l.google.com:19305',
           'stun:stun.cloudflare.com:3478',
-          'stun:stun.services.mozilla.com:3478',
           'stun:global.stun.stunprotocol.org:3478',
-          'stun:stun.nextcloud.com:443',
-          'stun:openrelay.metered.ca:80',
-          'stun:openrelay.metered.ca:443'
+          'stun:openrelay.metered.ca:80'
         ]
       },
 
-      // OpenRelay Primary Relay Pool (Metered.ca)
-      // Handles Symmetric NAT (mobile 4G/5G hotspots, tethering, cellular networks)
-      // Provides UDP for low latency, TCP for UDP-blocked firewalls, and TURNS (TLS on 443) to bypass DPI firewalls
+      // Official Metered Open Relay Project (Verified credentials: openrelayproject)
       {
         urls: [
           'turn:openrelay.metered.ca:80',
           'turn:openrelay.metered.ca:80?transport=tcp',
           'turn:openrelay.metered.ca:443',
-          'turn:openrelay.metered.ca:443?transport=tcp',
-          'turn:openrelay.metered.ca:3478',
-          'turn:openrelay.metered.ca:3478?transport=tcp',
-          'turns:openrelay.metered.ca:443',
-          'turns:openrelay.metered.ca:443?transport=tcp',
-          'turns:openrelay.metered.ca:5349',
-          'turns:openrelay.metered.ca:5349?transport=tcp'
+          'turn:openrelay.metered.ca:443?transport=tcp'
         ],
-        username: 'openrelay',
-        credential: 'openrelay'
-      },
-
-      // OpenRelay Secondary / Standard Relay Pool (Redundant fallback cluster)
-      {
-        urls: [
-          'turn:standard.relay.metered.ca:80',
-          'turn:standard.relay.metered.ca:80?transport=tcp',
-          'turn:standard.relay.metered.ca:443',
-          'turn:standard.relay.metered.ca:443?transport=tcp',
-          'turn:standard.relay.metered.ca:3478',
-          'turn:standard.relay.metered.ca:3478?transport=tcp',
-          'turns:standard.relay.metered.ca:443',
-          'turns:standard.relay.metered.ca:443?transport=tcp',
-          'turns:standard.relay.metered.ca:5349',
-          'turns:standard.relay.metered.ca:5349?transport=tcp'
-        ],
-        username: 'openrelay',
-        credential: 'openrelay'
-      },
-
-      // PeerJS free cloud TURN relays (Fallback)
-      {
-        urls: [
-          'turn:eu-0.turn.peerjs.com:3478',
-          'turn:us-0.turn.peerjs.com:3478'
-        ],
-        username: 'peerjs',
-        credential: 'peerjsp'
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
       }
     ];
 
@@ -328,7 +273,8 @@
       });
 
       pc.addEventListener('icecandidateerror', (evt) => {
-        if (evt && evt.url && evt.errorCode !== 701) {
+        // Error 701: STUN binding failure; Error 401: Normal WebRTC TURN authentication challenge handshake
+        if (evt && evt.url && evt.errorCode !== 701 && evt.errorCode !== 401) {
           console.warn(`[Netplay ICE ${role}] Relay notice on ${evt.url}: ${evt.errorText} (${evt.errorCode})`);
         }
       });
