@@ -150,14 +150,79 @@
     15: 'RIGHT'  // D-Pad Right
   };
 
-  // Robust WebRTC ICE Servers (STUN for direct LAN/P2P + TURN for Symmetric NAT / internet firewalls)
-  const ICE_CONFIG = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:global.stun.stunprotocol.org:3478' },
-      // PeerJS free cloud TURN relays
+  // Comprehensive, multi-tiered STUN & TURN fallback relays.
+  // 1. Google Anycast STUN cluster across ports 19302 and 19305
+  // 2. Cloudflare Global Edge STUN (stun:stun.cloudflare.com:3478)
+  // 3. Mozilla STUN (stun:stun.services.mozilla.com:3478)
+  // 4. Protocol standard STUN (stun:global.stun.stunprotocol.org:3478)
+  // 5. Port 443 STUN for networks blocking UDP 3478/19302 (stun:stun.nextcloud.com:443)
+  // 6. Metered OpenRelay Primary Pool (UDP/TCP on 80 & 443 & 3478, and encrypted TURNS on 443 & 5349)
+  // 7. Metered Standard Relay Secondary Pool (UDP/TCP on 80 & 443 & 3478, and encrypted TURNS on 443 & 5349)
+  // 8. PeerJS Cloud Free TURN relays (UDP 3478)
+  // 9. Custom user-injected ICE servers via window.TEKKEN_CUSTOM_ICE_SERVERS or localStorage('tekken_ice_servers')
+  function getEffectiveIceConfig() {
+    const defaultIceServers = [
+      // Direct LAN / WAN STUN reflexive candidate discovery
+      {
+        urls: [
+          'stun:stun.l.google.com:19302',
+          'stun:stun1.l.google.com:19302',
+          'stun:stun2.l.google.com:19302',
+          'stun:stun3.l.google.com:19302',
+          'stun:stun4.l.google.com:19302',
+          'stun:stun.l.google.com:19305',
+          'stun:stun1.l.google.com:19305',
+          'stun:stun2.l.google.com:19305',
+          'stun:stun3.l.google.com:19305',
+          'stun:stun4.l.google.com:19305',
+          'stun:stun.cloudflare.com:3478',
+          'stun:stun.services.mozilla.com:3478',
+          'stun:global.stun.stunprotocol.org:3478',
+          'stun:stun.nextcloud.com:443',
+          'stun:openrelay.metered.ca:80',
+          'stun:openrelay.metered.ca:443'
+        ]
+      },
+
+      // OpenRelay Primary Relay Pool (Metered.ca)
+      // Handles Symmetric NAT (mobile 4G/5G hotspots, tethering, cellular networks)
+      // Provides UDP for low latency, TCP for UDP-blocked firewalls, and TURNS (TLS on 443) to bypass DPI firewalls
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:80?transport=tcp',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+          'turn:openrelay.metered.ca:3478',
+          'turn:openrelay.metered.ca:3478?transport=tcp',
+          'turns:openrelay.metered.ca:443',
+          'turns:openrelay.metered.ca:443?transport=tcp',
+          'turns:openrelay.metered.ca:5349',
+          'turns:openrelay.metered.ca:5349?transport=tcp'
+        ],
+        username: 'openrelay',
+        credential: 'openrelay'
+      },
+
+      // OpenRelay Secondary / Standard Relay Pool (Redundant fallback cluster)
+      {
+        urls: [
+          'turn:standard.relay.metered.ca:80',
+          'turn:standard.relay.metered.ca:80?transport=tcp',
+          'turn:standard.relay.metered.ca:443',
+          'turn:standard.relay.metered.ca:443?transport=tcp',
+          'turn:standard.relay.metered.ca:3478',
+          'turn:standard.relay.metered.ca:3478?transport=tcp',
+          'turns:standard.relay.metered.ca:443',
+          'turns:standard.relay.metered.ca:443?transport=tcp',
+          'turns:standard.relay.metered.ca:5349',
+          'turns:standard.relay.metered.ca:5349?transport=tcp'
+        ],
+        username: 'openrelay',
+        credential: 'openrelay'
+      },
+
+      // PeerJS free cloud TURN relays (Fallback)
       {
         urls: [
           'turn:eu-0.turn.peerjs.com:3478',
@@ -165,21 +230,114 @@
         ],
         username: 'peerjs',
         credential: 'peerjsp'
-      },
-      // OpenRelay free public TURN relays (UDP + TCP fallback over port 443 & 80)
-      {
-        urls: [
-          'turn:openrelay.metered.ca:80',
-          'turn:openrelay.metered.ca:443',
-          'turn:openrelay.metered.ca:443?transport=tcp'
-        ],
-        username: 'openrelay',
-        credential: 'openrelay'
       }
-    ],
-    iceCandidatePoolSize: 10,
-    sdpSemantics: 'unified-plan'
-  };
+    ];
+
+    let customServers = [];
+    try {
+      if (Array.isArray(window.TEKKEN_CUSTOM_ICE_SERVERS)) {
+        customServers = window.TEKKEN_CUSTOM_ICE_SERVERS;
+      } else if (typeof localStorage !== 'undefined') {
+        const stored = localStorage.getItem('tekken_ice_servers');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) customServers = parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('[Netplay] Could not load custom ICE servers:', e);
+    }
+
+    return {
+      iceServers: [...customServers, ...defaultIceServers],
+      iceTransportPolicy: 'all',
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+      iceCandidatePoolSize: 10,
+      sdpSemantics: 'unified-plan'
+    };
+  }
+
+  const ICE_CONFIG = getEffectiveIceConfig();
+
+  async function logActiveIcePair(pc, role) {
+    try {
+      if (!pc || typeof pc.getStats !== 'function') return;
+      const stats = await pc.getStats();
+      let activePair = null;
+
+      stats.forEach((report) => {
+        if (report.type === 'transport' && report.selectedCandidatePairId) {
+          activePair = stats.get(report.selectedCandidatePairId);
+        }
+      });
+
+      if (!activePair) {
+        stats.forEach((report) => {
+          if (report.type === 'candidate-pair' && (report.selected || report.nominated || report.state === 'succeeded')) {
+            activePair = report;
+          }
+        });
+      }
+
+      if (activePair) {
+        const local = stats.get(activePair.localCandidateId);
+        const remote = stats.get(activePair.remoteCandidateId);
+        const rtt = activePair.currentRoundTripTime !== undefined
+          ? Math.round(activePair.currentRoundTripTime * 1000) + 'ms'
+          : 'n/a';
+        const linkType = (local?.candidateType === 'relay' || remote?.candidateType === 'relay')
+          ? 'RELAY (TURN Fallback)'
+          : (local?.candidateType === 'srflx' || remote?.candidateType === 'srflx')
+            ? 'DIRECT WAN (STUN Reflexive)'
+            : 'DIRECT LAN (Host)';
+
+        console.log(`%c[Netplay ICE ${role}] Active Link: ${linkType} (RTT: ${rtt})`, 'color: #00ffff; font-weight: bold;');
+        console.log(`[Netplay ICE ${role}] Local: [${local?.candidateType || '?'}] ${local?.protocol?.toUpperCase() || '?'} ${local?.ip || local?.address || '?'}:${local?.port || '?'} <===> Remote: [${remote?.candidateType || '?'}] ${remote?.protocol?.toUpperCase() || '?'} ${remote?.ip || remote?.address || '?'}:${remote?.port || '?'}`);
+      }
+    } catch (e) {
+      // Diagnostic only
+    }
+  }
+
+  function attachIceDiagnostics(conn, role) {
+    if (!conn) return;
+
+    const checkPc = () => {
+      const pc = conn.peerConnection;
+      if (!pc || pc.__iceDiagAttached) return;
+      pc.__iceDiagAttached = true;
+
+      pc.addEventListener('iceconnectionstatechange', () => {
+        const state = pc.iceConnectionState;
+        console.log(`[Netplay ICE ${role}] iceConnectionState: ${state}`);
+        if (state === 'connected' || state === 'completed') {
+          logActiveIcePair(pc, role);
+        } else if (state === 'failed') {
+          console.warn(`[Netplay ICE ${role}] ICE connection failed. Attempting ICE restart...`);
+          if (typeof pc.restartIce === 'function') {
+            try {
+              pc.restartIce();
+            } catch (e) {}
+          }
+        }
+      });
+
+      pc.addEventListener('connectionstatechange', () => {
+        console.log(`[Netplay ICE ${role}] connectionState: ${pc.connectionState}`);
+      });
+
+      pc.addEventListener('icecandidateerror', (evt) => {
+        if (evt && evt.url && evt.errorCode !== 701) {
+          console.warn(`[Netplay ICE ${role}] Relay notice on ${evt.url}: ${evt.errorText} (${evt.errorCode})`);
+        }
+      });
+    };
+
+    checkPc();
+    setTimeout(checkPc, 100);
+    setTimeout(checkPc, 500);
+  }
 
   function injectDOMKey(action, keyDef) {
     if (!keyDef) return;
@@ -816,7 +974,7 @@
 
       const baseOpts = {
         debug: 1,
-        config: ICE_CONFIG,
+        config: getEffectiveIceConfig(),
         pingInterval: 5000
       };
 
@@ -885,12 +1043,14 @@
           try { this.conn.close(); } catch (e) {}
         }
         this.conn = conn;
+        attachIceDiagnostics(this.conn, 'HOST');
         this.setupHostConnection();
       });
     }
 
     setupHostConnection() {
       if (!this.conn) return;
+      attachIceDiagnostics(this.conn, 'HOST');
 
       this.conn.on('open', () => {
         console.log('[Netplay Host] Player 2 linked!');
@@ -1071,8 +1231,10 @@
           try { this.conn.close(); } catch (e) {}
         }
         this.conn = this.peer.connect(hostPeerId, {
-          reliable: true // In-order, lossless SCTP delivery prevents dropped or swapped keyups
+          reliable: true, // In-order, lossless SCTP delivery prevents dropped or swapped keyups
+          config: getEffectiveIceConfig()
         });
+        attachIceDiagnostics(this.conn, 'GUEST');
         this.setupGuestConnection(hostPeerId);
       } catch (err) {
         console.warn('[Netplay connect error]', err);
@@ -1100,6 +1262,7 @@
 
     setupGuestConnection(hostPeerId) {
       if (!this.conn) return;
+      attachIceDiagnostics(this.conn, 'GUEST');
 
       this.conn.on('open', () => {
         console.log('[Netplay Guest] Connected to Host!');
