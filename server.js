@@ -1,9 +1,21 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const express = require('express');
+const { ExpressPeerServer } = require('peer');
 
 const PORT = process.env.PORT || 3000;
 const ROOT_DIR = path.resolve(__dirname, 'web');
+
+const app = express();
+const server = http.createServer(app);
+
+// Instant local PeerJS signaling server for LAN & localhost testing
+const peerServer = ExpressPeerServer(server, {
+  path: '/',
+  allow_discovery: true
+});
+app.use('/peerjs', peerServer);
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=UTF-8',
@@ -24,7 +36,7 @@ const MIME_TYPES = {
   '.wav': 'audio/wav',
 };
 
-const server = http.createServer((req, res) => {
+app.use((req, res) => {
   // Required security headers for WebAssembly SharedArrayBuffer and performance
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');

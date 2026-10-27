@@ -7,7 +7,18 @@
     "start": "node server.js",
     "dev": "node server.js"
   },
-  "keywords": ["tekken3", "webassembly", "wasm", "webgl", "psxrecomp"],
+  "keywords": [
+    "tekken3",
+    "webassembly",
+    "wasm",
+    "webgl",
+    "psxrecomp"
+  ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.3.0",
+    "peer": "^1.0.2",
+    "ws": "^8.22.0"
+  }
 }

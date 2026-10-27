@@ -18,23 +18,19 @@
   const MATCH_TIMER_OFFSET = 0x11863c; // 0x8011863c & 0x1fffff
 
   function getWasmBuffer() {
-    if (window.tekkenWasmBuffer) return window.tekkenWasmBuffer;
-    if (window.wasmInstance && window.wasmInstance.wasmMemory && window.wasmInstance.wasmMemory.buffer) {
-      window.tekkenWasmBuffer = window.wasmInstance.wasmMemory.buffer;
-      return window.tekkenWasmBuffer;
-    }
-    if (window.wasmInstance && window.wasmInstance.HEAPU32 && window.wasmInstance.HEAPU32.buffer) {
-      window.tekkenWasmBuffer = window.wasmInstance.HEAPU32.buffer;
-      return window.tekkenWasmBuffer;
+    if (window.Module && window.Module.HEAPU8 && window.Module.HEAPU8.buffer) {
+      return window.Module.HEAPU8.buffer;
     }
     if (window.Module && window.Module.wasmMemory && window.Module.wasmMemory.buffer) {
-      window.tekkenWasmBuffer = window.Module.wasmMemory.buffer;
-      return window.tekkenWasmBuffer;
+      return window.Module.wasmMemory.buffer;
     }
-    if (window.Module && window.Module.HEAPU32 && window.Module.HEAPU32.buffer) {
-      window.tekkenWasmBuffer = window.Module.HEAPU32.buffer;
-      return window.tekkenWasmBuffer;
+    if (window.wasmInstance && window.wasmInstance.HEAPU8 && window.wasmInstance.HEAPU8.buffer) {
+      return window.wasmInstance.HEAPU8.buffer;
     }
+    if (window.wasmInstance && window.wasmInstance.wasmMemory && window.wasmInstance.wasmMemory.buffer) {
+      return window.wasmInstance.wasmMemory.buffer;
+    }
+    if (window.tekkenWasmBuffer) return window.tekkenWasmBuffer;
     return null;
   }
 
@@ -239,6 +235,14 @@
       this.ramPtr = 0;
       this.camYaw = 0;
 
+      // Continuous 60Hz Frame Input Sync & Live State Tracking
+      this.heldButtons = new Set();
+      this.remoteHeldButtons = new Set();
+      this.guestFightAck = false;
+      this.lastReadyPing = 0;
+      this.syncCount = 0;
+      this.cleanedUp = false;
+
       this.initDom();
       this.initHashListener();
     }
@@ -250,6 +254,7 @@
       this.hudModeStatus = document.getElementById('hudModeStatus');
       this.hudPing = document.getElementById('hudPing');
       this.hudRoom = document.getElementById('hudRoom');
+      this.hudSync = document.getElementById('hudSync');
       this.btnDisconnect = document.getElementById('btnDisconnect');
 
       // Floating Room Notice Banner
@@ -395,69 +400,91 @@
             if (s === 9 || s === 10) {
               // Character Select: reset combat states if returning from battle/rematch
               if (this.fightActive || this.localStageReady || this.peerStageReady) {
-                this.fightActive = false;
-                this.localStageReady = false;
-                this.peerStageReady = false;
-                this.fightFrame = 0;
-                this.peerFightFrame = 0;
-                this.localInputQueue = [];
-                this.remoteInputQueue = [];
-                this.releaseAllInjectedKeys();
+                this.resetFightState();
               }
               this.updateHudStatus('SELECT FIGHTER', true);
             } else if (s === 11) {
-              // Stage Loading: hold inputs and reset ready flags so both engines sync before battle
-              if (this.fightActive || this.localStageReady || this.peerStageReady) {
+              // Stage Loading: hold inputs and reset local ready flag.
+              // CRITICAL: NEVER reset this.peerStageReady here! If peer is already ready, keep it!
+              if (this.fightActive || this.localStageReady) {
                 this.fightActive = false;
                 this.localStageReady = false;
-                this.peerStageReady = false;
                 this.fightFrame = 0;
                 this.peerFightFrame = 0;
                 this.localInputQueue = [];
                 this.remoteInputQueue = [];
+                if (this.heldButtons) this.heldButtons.clear();
+                if (this.remoteHeldButtons) this.remoteHeldButtons.clear();
                 this.releaseAllInjectedKeys();
+                this.updateSyncBadge(false);
               }
               this.updateHudStatus('LOADING STAGE...', true);
             } else if (s === 8) {
               // Battle Screen: Stage Ready Barrier
-              if (!this.localStageReady) {
-                this.localStageReady = true;
-                this.conn.send({ type: 'stage_ready', screen: 8 });
-              }
-
-              if (!this.peerStageReady) {
-                this.updateHudStatus('WAITING FOR PEER TO LOAD...', true);
-                return; // Hold neutral until peer finishes loading
-              }
+              this.localStageReady = true;
 
               if (!this.fightActive) {
+                // Heartbeat ready signal every 150ms until fight starts
+                const now = Date.now();
+                if (!this.lastReadyPing || (now - this.lastReadyPing > 150)) {
+                  this.lastReadyPing = now;
+                  this.conn.send({ type: 'stage_ready', screen: 8, role: this.role });
+                }
+
+                if (!this.peerStageReady) {
+                  this.updateHudStatus('WAITING FOR PEER TO LOAD...', true);
+                  return; // Hold neutral until peer finishes loading
+                }
+
                 if (this.role === 'host') {
                   this.conn.send({ type: 'start_fight', startFrame: 0 });
                   this.startFight();
+                  return;
                 } else {
                   this.updateHudStatus('READY... AWAITING HOST', true);
                   return;
                 }
-              } else {
-                // Fight active: step logical frame and apply queued inputs every single frame
+              }
+
+              // Fight active: step logical frame and apply queued inputs every single frame
+              this.fightFrame++;
+              this.processInputQueues();
+
+              // Continuous 60Hz per-frame held input state transmission
+              if (this.heldButtons) {
+                this.conn.send({
+                  type: 'frame_input',
+                  f: this.fightFrame,
+                  player: (this.role === 'host' ? 1 : 2),
+                  btns: Array.from(this.heldButtons)
+                });
+              }
+
+              // Host repeats start_fight heartbeat during first 10 frames until Guest ACKs
+              if (this.role === 'host' && !this.guestFightAck && this.fightFrame <= 10) {
+                this.conn.send({ type: 'start_fight', startFrame: 0 });
+              }
+
+              // Periodic clock tick heartbeat every 15 frames (~250ms)
+              if (this.fightFrame % 15 === 0) {
+                this.conn.send({ type: 'clock_tick', f: this.fightFrame });
+              }
+
+              // Authoritative Host Combat State Sync Heartbeat every 60 frames (~1.0s)
+              if (this.role === 'host' && this.fightFrame % 60 === 0 && this.fightFrame > 0) {
+                this.sendCombatSync();
+              }
+
+              // If local engine lagged behind peer by > 3 frames, step extra catch-up cycle
+              if (this.peerFightFrame > 0 && (this.fightFrame - this.peerFightFrame < -3)) {
                 this.fightFrame++;
                 this.processInputQueues();
-
-                // Periodic clock tick heartbeat every 15 frames (~250ms)
-                if (this.fightFrame % 15 === 0) {
-                  this.conn.send({ type: 'clock_tick', f: this.fightFrame });
-                }
-
-                // Authoritative Host Combat State Sync Heartbeat every 60 frames (~1.0s)
-                if (this.role === 'host' && this.fightFrame % 60 === 0 && this.fightFrame > 0) {
-                  this.sendCombatSync();
-                }
-
-                // If local engine lagged behind peer by > 3 frames, step extra catch-up cycle
-                if (this.peerFightFrame > 0 && (this.fightFrame - this.peerFightFrame < -3)) {
-                  this.fightFrame++;
-                  this.processInputQueues();
-                }
+              }
+            } else if (s === 13) {
+              // Match Results / Rematch / Continue
+              if (this.fightActive) {
+                this.resetFightState();
+                this.updateHudStatus('MATCH FINISHED', true);
               }
             }
           } else {
@@ -483,13 +510,7 @@
         this.localInVsMode = false;
         this.versusActive = false;
         this.sentInVsPacket = false;
-        this.fightActive = false;
-        this.localStageReady = false;
-        this.peerStageReady = false;
-        this.fightFrame = 0;
-        this.peerFightFrame = 0;
-        this.localInputQueue = [];
-        this.remoteInputQueue = [];
+        this.resetFightState();
 
         // When returning to main menu (screen 4), reset prompt flag so next VS entry triggers prompt
         if (s === 4) {
@@ -502,11 +523,49 @@
       this.fightActive = true;
       this.fightFrame = 0;
       this.peerFightFrame = 0;
+      this.syncCount = 0;
       this.localInputQueue = [];
       this.remoteInputQueue = [];
+      if (this.heldButtons) this.heldButtons.clear();
+      if (this.remoteHeldButtons) this.remoteHeldButtons.clear();
       this.releaseAllInjectedKeys();
       this.updateHudStatus('ROUND 1 - FIGHT!', true);
+      this.updateSyncBadge(true, true);
       console.log(`[Netplay] Synchronized fight started! Role: ${this.role}, Delay: ${this.inputDelay} frames`);
+    }
+
+    resetFightState() {
+      this.fightActive = false;
+      this.localStageReady = false;
+      this.peerStageReady = false;
+      this.guestFightAck = false;
+      this.lastReadyPing = 0;
+      this.fightFrame = 0;
+      this.peerFightFrame = 0;
+      this.syncCount = 0;
+      this.localInputQueue = [];
+      this.remoteInputQueue = [];
+      if (this.heldButtons) this.heldButtons.clear();
+      if (this.remoteHeldButtons) this.remoteHeldButtons.clear();
+      this.releaseAllInjectedKeys();
+      this.updateSyncBadge(false);
+    }
+
+    updateSyncBadge(active = true, flash = false) {
+      if (!this.hudSync) return;
+      if (!active) {
+        this.hudSync.style.display = 'none';
+        return;
+      }
+      this.hudSync.style.display = 'inline-flex';
+      const countText = this.syncCount > 0 ? ` #${this.syncCount}` : '';
+      this.hudSync.textContent = `● SYNC: 60Hz${countText}`;
+      if (flash) {
+        this.hudSync.classList.add('flash');
+        setTimeout(() => {
+          if (this.hudSync) this.hudSync.classList.remove('flash');
+        }, 300);
+      }
     }
 
     processInputQueues() {
@@ -554,7 +613,7 @@
     sendCombatSync() {
       if (!this.connected || !this.conn || !this.conn.open) return;
       const buf = getWasmBuffer();
-      if (!buf || this.ramPtr === undefined || this.ramPtr === null) return;
+      if (!buf || this.ramPtr === undefined || this.ramPtr === null || this.ramPtr < 0) return;
 
       try {
         const dv = new DataView(buf, this.ramPtr, 0x200000);
@@ -595,6 +654,12 @@
           timer,
           cam
         });
+
+        this.syncCount = (this.syncCount || 0) + 1;
+        this.updateSyncBadge(true, true);
+        if (this.syncCount % 3 === 0) {
+          console.log(`[Netplay Sync] Frame ${this.fightFrame}: Sent state sync #${this.syncCount} (P1 HP: ${p1[8]}, P2 HP: ${p2[8]})`);
+        }
       } catch (err) {
         console.warn('[Netplay] Error reading combat sync from RAM:', err);
       }
@@ -606,7 +671,7 @@
       if (!data || !Array.isArray(data.p1) || !Array.isArray(data.p2)) return;
 
       const buf = getWasmBuffer();
-      if (!buf || this.ramPtr === undefined || this.ramPtr === null) return;
+      if (!buf || this.ramPtr === undefined || this.ramPtr === null || this.ramPtr < 0) return;
 
       try {
         const dv = new DataView(buf, this.ramPtr, 0x200000);
@@ -644,6 +709,12 @@
           if (Math.abs(this.fightFrame - data.f) > 3) {
             this.fightFrame = data.f;
           }
+        }
+
+        this.syncCount = (this.syncCount || 0) + 1;
+        this.updateSyncBadge(true, true);
+        if (this.syncCount % 3 === 0) {
+          console.log(`[Netplay Sync] Frame ${this.fightFrame}: Applied state sync #${this.syncCount} (P1 HP: ${data.p1[8]}, P2 HP: ${data.p2[8]})`);
         }
       } catch (err) {
         console.warn('[Netplay] Error applying combat sync to RAM:', err);
@@ -734,6 +805,34 @@
       return 'tekken3-netplay-' + code.toLowerCase().replace(/[^a-z0-9]/g, '');
     }
 
+    getPeerOptions() {
+      const isLocal = (
+        window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1' ||
+        window.location.hostname.startsWith('192.168.') ||
+        window.location.hostname.startsWith('10.') ||
+        window.location.port === '3000'
+      );
+
+      const baseOpts = {
+        debug: 1,
+        config: ICE_CONFIG,
+        pingInterval: 5000
+      };
+
+      if (isLocal) {
+        return {
+          ...baseOpts,
+          host: window.location.hostname,
+          port: parseInt(window.location.port || (window.location.protocol === 'https:' ? 443 : 80), 10),
+          path: '/peerjs',
+          secure: window.location.protocol === 'https:'
+        };
+      }
+
+      return baseOpts;
+    }
+
     createRoom(fromPrompt = false) {
       this.cleanupNetwork();
       if (typeof window.ensureAudioKeepAlive === 'function') window.ensureAudioKeepAlive();
@@ -742,31 +841,46 @@
       const peerId = this.normalizePeerId(code);
       this.role = 'host';
       this.roomId = code;
+      this.cleanedUp = false;
 
-      this.updatePromptStatus('CONNECTING TO LOBBY...');
+      this.updatePromptStatus('CONNECTING TO SIGNALING LOBBY...');
 
-      this.peer = new Peer(peerId, {
-        debug: 1,
-        config: ICE_CONFIG
-      });
+      const opts = this.getPeerOptions();
+      this.peer = new Peer(peerId, opts);
 
-      this.peer.on('open', () => {
+      this.peer.on('open', (id) => {
+        console.log(`[Netplay Host] Lobby registered with ID: ${id}`);
         const waitingMsg = 'WAITING FOR CHALLENGER...';
         this.updatePromptStatus(waitingMsg);
         if (this.promptRoomCode) this.promptRoomCode.textContent = code;
         this.showRoomNotice(`ROOM ${code} READY // INVITE A FRIEND`);
       });
 
+      this.peer.on('disconnected', () => {
+        if (!this.cleanedUp && this.peer && !this.peer.destroyed) {
+          console.warn('[Netplay Host] Signaling socket disconnected, auto-reconnecting...');
+          this.peer.reconnect();
+        }
+      });
+
       this.peer.on('error', (err) => {
         console.warn('[Netplay Host Error]', err);
         if (err.type === 'unavailable-id') {
-          setTimeout(() => this.createRoom(fromPrompt), 500);
+          setTimeout(() => this.createRoom(fromPrompt), 400);
+        } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
+          this.updatePromptStatus(`SIGNALING NOTICE: ${err.message || err.type}. Reconnecting...`);
+          setTimeout(() => {
+            if (!this.connected && !this.cleanedUp) {
+              if (this.peer && !this.peer.destroyed) this.peer.reconnect();
+            }
+          }, 1500);
         } else {
           this.updatePromptStatus(`LOBBY NOTICE: ${err.type || err.message}`);
         }
       });
 
       this.peer.on('connection', (conn) => {
+        console.log('[Netplay Host] Incoming peer connection received!');
         if (this.conn) {
           try { this.conn.close(); } catch (e) {}
         }
@@ -781,6 +895,8 @@
       this.conn.on('open', () => {
         console.log('[Netplay Host] Player 2 linked!');
         this.connected = true;
+        this.guestFightAck = false;
+        if (this.remoteHeldButtons) this.remoteHeldButtons.clear();
         this.updateHud('HOST (P1)', this.roomId);
         this.updatePromptStatus('CHALLENGER LINKED // ENTERING BATTLE...');
 
@@ -820,11 +936,7 @@
           this.peerInVsMode = false;
           this.versusActive = false;
           this.sentInVsPacket = false;
-          this.fightActive = false;
-          this.localStageReady = false;
-          this.peerStageReady = false;
-          this.peerFightFrame = 0;
-          this.releaseAllInjectedKeys();
+          this.resetFightState();
           this.updateHudStatus('PEER EXITED TO MENU', false);
           this.showRoomNotice('Player 2 left Versus Mode back to Main Menu.');
         } else if (data.type === 'stage_ready') {
@@ -832,6 +944,28 @@
           if (this.localStageReady && !this.fightActive) {
             this.conn.send({ type: 'start_fight', startFrame: 0 });
             this.startFight();
+          }
+        } else if (data.type === 'fight_ack') {
+          this.guestFightAck = true;
+        } else if (data.type === 'frame_input') {
+          if (this.fightActive && Array.isArray(data.btns)) {
+            const remoteKeys = P2_HOST_KEYS;
+            const incoming = new Set(data.btns);
+
+            // Release any button no longer held
+            for (const b of this.remoteHeldButtons) {
+              if (!incoming.has(b)) {
+                this.remoteHeldButtons.delete(b);
+                if (remoteKeys[b]) injectDOMKey('keyup', remoteKeys[b]);
+              }
+            }
+            // Press any new button
+            for (const b of incoming) {
+              if (!this.remoteHeldButtons.has(b)) {
+                this.remoteHeldButtons.add(b);
+                if (remoteKeys[b]) injectDOMKey('keydown', remoteKeys[b]);
+              }
+            }
           }
         } else if (data.type === 'fight_input') {
           if (data.btn && (data.player === 1 || data.player === 2)) {
@@ -880,26 +1014,40 @@
       this.role = 'guest';
       this.roomId = code.toUpperCase();
       this.joinRetryAttempts = 0;
+      this.cleanedUp = false;
 
       if (this.promptJoinInput) {
         this.promptJoinInput.value = this.roomId;
       }
 
-      this.updatePromptStatus('CONNECTING TO LOBBY...');
+      this.updatePromptStatus('CONNECTING TO SIGNALING LOBBY...');
 
-      this.peer = new Peer({
-        debug: 1,
-        config: ICE_CONFIG
+      const opts = this.getPeerOptions();
+      this.peer = new Peer(opts);
+
+      this.peer.on('open', (id) => {
+        console.log(`[Netplay Guest] Registered in lobby with ID: ${id}`);
+        this.attemptGuestConnect(hostPeerId);
       });
 
-      this.peer.on('open', () => {
-        this.attemptGuestConnect(hostPeerId);
+      this.peer.on('disconnected', () => {
+        if (!this.cleanedUp && this.peer && !this.peer.destroyed) {
+          console.warn('[Netplay Guest] Signaling socket disconnected, auto-reconnecting...');
+          this.peer.reconnect();
+        }
       });
 
       this.peer.on('error', (err) => {
         console.warn('[Netplay Guest Peer Error]', err);
         if (err.type === 'peer-unavailable') {
           this.retryGuestConnect(hostPeerId);
+        } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
+          this.updatePromptStatus(`SIGNALING NOTICE: ${err.message || err.type}. Reconnecting...`);
+          setTimeout(() => {
+            if (!this.connected && !this.cleanedUp) {
+              if (this.peer && !this.peer.destroyed) this.peer.reconnect();
+            }
+          }, 1500);
         } else {
           this.updatePromptStatus(`FAILED TO CONNECT: ${err.type || err.message}`);
         }
@@ -964,6 +1112,7 @@
           this.joinRetryTimer = null;
         }
         this.connected = true;
+        if (this.remoteHeldButtons) this.remoteHeldButtons.clear();
         this.updateHud('CHALLENGER (P2)', this.roomId);
         this.updatePromptStatus('CONNECTED TO HOST // ENTERING BATTLE...');
 
@@ -1021,18 +1170,39 @@
           this.peerInVsMode = false;
           this.versusActive = false;
           this.sentInVsPacket = false;
-          this.fightActive = false;
-          this.localStageReady = false;
-          this.peerStageReady = false;
-          this.peerFightFrame = 0;
-          this.releaseAllInjectedKeys();
+          this.resetFightState();
           this.updateHudStatus('PEER EXITED TO MENU', false);
           this.showRoomNotice('Host left Versus Mode back to Main Menu.');
         } else if (data.type === 'stage_ready') {
           this.peerStageReady = true;
           // Guest waits for Host to send 'start_fight'
         } else if (data.type === 'start_fight') {
-          this.startFight();
+          this.peerStageReady = true;
+          this.localStageReady = true;
+          this.conn.send({ type: 'fight_ack' });
+          if (!this.fightActive) {
+            this.startFight();
+          }
+        } else if (data.type === 'frame_input') {
+          if (this.fightActive && Array.isArray(data.btns)) {
+            const remoteKeys = P1_HOST_KEYS;
+            const incoming = new Set(data.btns);
+
+            // Release any button no longer held
+            for (const b of this.remoteHeldButtons) {
+              if (!incoming.has(b)) {
+                this.remoteHeldButtons.delete(b);
+                if (remoteKeys[b]) injectDOMKey('keyup', remoteKeys[b]);
+              }
+            }
+            // Press any new button
+            for (const b of incoming) {
+              if (!this.remoteHeldButtons.has(b)) {
+                this.remoteHeldButtons.add(b);
+                if (remoteKeys[b]) injectDOMKey('keydown', remoteKeys[b]);
+              }
+            }
+          }
         } else if (data.type === 'fight_input') {
           if (data.btn && (data.player === 1 || data.player === 2)) {
             if (this.fightActive) {
@@ -1056,9 +1226,14 @@
       });
 
       this.conn.on('close', () => {
-        console.log('[Netplay Guest] Host disconnected');
-        this.disconnect();
-        alert('Match ended: Player 1 disconnected.');
+        if (this.connected) {
+          console.log('[Netplay Guest] Host disconnected');
+          this.disconnect();
+          alert('Match ended: Player 1 disconnected.');
+        } else {
+          console.log('[Netplay Guest] Link closed during handshake, retrying...');
+          this.retryGuestConnect(hostPeerId);
+        }
       });
     }
 
@@ -1106,6 +1281,9 @@
         const btn = P2_PHYSICAL_KEYS[e.code];
         if (!btn || !P2_HOST_KEYS[btn]) return;
 
+        if (e.type === 'keydown') this.heldButtons.add(btn);
+        else if (e.type === 'keyup') this.heldButtons.delete(btn);
+
         if (this.screen === 8 && this.fightActive) {
           // Synchronized battle: queue locally and send with target frame
           const targetFrame = this.fightFrame + this.inputDelay;
@@ -1139,6 +1317,9 @@
       if (this.role === 'host') {
         const btn = P1_PHYSICAL_KEYS[e.code];
         if (!btn || !P1_HOST_KEYS[btn]) return;
+
+        if (e.type === 'keydown') this.heldButtons.add(btn);
+        else if (e.type === 'keyup') this.heldButtons.delete(btn);
 
         if (this.screen === 8 && this.fightActive) {
           e.preventDefault();
@@ -1348,6 +1529,7 @@
         this.peer = null;
       }
 
+      this.cleanedUp = true;
       this.role = null;
       this.connected = false;
       this.versusActive = false;
@@ -1356,11 +1538,17 @@
       this.fightActive = false;
       this.localStageReady = false;
       this.peerStageReady = false;
+      this.guestFightAck = false;
+      this.lastReadyPing = 0;
       this.fightFrame = 0;
       this.peerFightFrame = 0;
+      this.syncCount = 0;
       this.localInputQueue = [];
       this.remoteInputQueue = [];
+      if (this.heldButtons) this.heldButtons.clear();
+      if (this.remoteHeldButtons) this.remoteHeldButtons.clear();
       this.prevGamepadState = {};
+      this.updateSyncBadge(false);
     }
 
     disconnect() {
