@@ -27,6 +27,7 @@
   const CAM_CTRL_TRACK_OFFSET = 0x0a8ca0; // 0x800a8ca0 & 0x1fffff: Camera tracking mode flag
   const CAM_CTRL_TARGET_OFFSET = 0x0a8cd4; // 0x800a8cd4 & 0x1fffff: Camera focal target
   const CAM_CTRL_ANGLE_OFFSET = 0x0a8cdc; // 0x800a8cdc & 0x1fffff: Camera angle controller
+  const PSX_RNG_SEED_OFFSET = 0x0a39b8; // 0x800a39b8 & 0x1fffff: func_8007A318 rand() PRNG state seed
 
   function getWasmBuffer() {
     if (window.Module && window.Module.HEAPU8 && window.Module.HEAPU8.buffer) {
@@ -556,6 +557,7 @@
                 if (this.role === 'host') {
                   let initCam = this.camYaw || 0;
                   let initPitch = 0;
+                  let initRngSeed = 0x12345678;
                   const buf = getWasmBuffer();
                   if (buf && this.ramPtr !== undefined && this.ramPtr !== null && this.ramPtr >= 0) {
                     try {
@@ -563,9 +565,10 @@
                       const ramYaw = dv.getInt32(CAM_YAW_OFFSET, true);
                       if (ramYaw !== 0) initCam = ramYaw;
                       initPitch = dv.getInt32(CAM_PITCH_OFFSET, true);
+                      initRngSeed = dv.getUint32(PSX_RNG_SEED_OFFSET, true);
                     } catch (e) {}
                   }
-                  this.conn.send({ type: 'start_fight', startFrame: 0, cam: initCam, pitch: initPitch });
+                  this.conn.send({ type: 'start_fight', startFrame: 0, cam: initCam, pitch: initPitch, rngSeed: initRngSeed });
                   this.startFight();
                   return;
                 } else {
@@ -625,6 +628,7 @@
               if (this.role === 'host' && !this.guestFightAck && this.fightFrame <= 10) {
                 let initCam = this.camYaw || 0;
                 let initPitch = 0;
+                let initRngSeed = 0x12345678;
                 const buf = getWasmBuffer();
                 if (buf && this.ramPtr !== undefined && this.ramPtr !== null && this.ramPtr >= 0) {
                   try {
@@ -632,9 +636,10 @@
                     const ramYaw = dv.getInt32(CAM_YAW_OFFSET, true);
                     if (ramYaw !== 0) initCam = ramYaw;
                     initPitch = dv.getInt32(CAM_PITCH_OFFSET, true);
+                    initRngSeed = dv.getUint32(PSX_RNG_SEED_OFFSET, true);
                   } catch (e) {}
                 }
-                this.conn.send({ type: 'start_fight', startFrame: 0, cam: initCam, pitch: initPitch });
+                this.conn.send({ type: 'start_fight', startFrame: 0, cam: initCam, pitch: initPitch, rngSeed: initRngSeed });
               }
 
               // Periodic clock tick heartbeat every 15 frames (~250ms)
@@ -642,8 +647,10 @@
                 this.conn.send({ type: 'clock_tick', f: this.fightFrame });
               }
 
-              // Authoritative Host Combat State Sync Heartbeat on frame 1 and every 15 frames (~250ms)
-              if (this.role === 'host' && (this.fightFrame === 1 || this.fightFrame % 15 === 0) && this.fightFrame > 0) {
+              // Authoritative Host Combat State Sync:
+              // Runs on frame 1 (instant round entry anchor), frame 5, frame 10 (early round lock),
+              // and every 15 frames (~250ms) during the entire match.
+              if (this.role === 'host' && (this.fightFrame === 1 || this.fightFrame === 5 || this.fightFrame === 10 || this.fightFrame % 15 === 0) && this.fightFrame > 0) {
                 this.sendCombatSync();
               }
 
@@ -818,6 +825,7 @@
         ];
 
         const timer = dv.getUint32(MATCH_TIMER_OFFSET, true);
+        const rngSeed = dv.getUint32(PSX_RNG_SEED_OFFSET, true);
         const camYawVal = (this.camYaw !== undefined && this.camYaw !== null && this.camYaw !== 0)
           ? this.camYaw
           : dv.getInt32(CAM_YAW_OFFSET, true);
@@ -841,13 +849,14 @@
           p1,
           p2,
           timer,
-          cam
+          cam,
+          rngSeed
         });
 
         this.syncCount = (this.syncCount || 0) + 1;
         this.updateSyncBadge(true, true);
-        if (this.syncCount % 3 === 0) {
-          console.log(`[Netplay Sync] Frame ${this.fightFrame}: Sent state sync #${this.syncCount} (P1 HP: ${p1[8]}, P2 HP: ${p2[8]}, Cam Yaw: ${cam.yaw})`);
+        if (this.syncCount % 12 === 0 || this.fightFrame === 1) {
+          console.log(`[Netplay Sync] Frame ${this.fightFrame}: Sent state sync #${this.syncCount} (P1 HP: ${p1[8]}, P2 HP: ${p2[8]}, Cam Yaw: ${cam.yaw}, RNG: 0x${rngSeed.toString(16)})`);
         }
       } catch (err) {
         console.warn('[Netplay] Error reading combat sync from RAM:', err);
@@ -920,6 +929,11 @@
           }
         }
 
+        // Synchronize round-start / combat PRNG state seed
+        if (data.rngSeed !== undefined) {
+          dv.setUint32(PSX_RNG_SEED_OFFSET, data.rngSeed, true);
+        }
+
         // Align peer fight frame
         if (data.f !== undefined) {
           this.peerFightFrame = data.f;
@@ -930,8 +944,8 @@
 
         this.syncCount = (this.syncCount || 0) + 1;
         this.updateSyncBadge(true, true);
-        if (this.syncCount % 3 === 0) {
-          console.log(`[Netplay Sync] Frame ${this.fightFrame}: Applied state sync #${this.syncCount} (P1 HP: ${data.p1[8]}, P2 HP: ${data.p2[8]})`);
+        if (this.syncCount % 12 === 0 || (data.f && data.f <= 10)) {
+          console.log(`[Netplay Sync] Frame ${this.fightFrame}: Applied state sync #${this.syncCount} (P1 HP: ${data.p1[8]}, P2 HP: ${data.p2[8]}, Cam: ${data.cam && data.cam.yaw !== undefined ? data.cam.yaw : data.cam})`);
         }
       } catch (err) {
         console.warn('[Netplay] Error applying combat sync to RAM:', err);
@@ -1438,17 +1452,25 @@
           this.peerStageReady = true;
           this.localStageReady = true;
           this.conn.send({ type: 'fight_ack' });
-          if (data.cam !== undefined) {
-            this.lastHostCamYaw = (typeof data.cam === 'object') ? data.cam.yaw : data.cam;
-            if (data.pitch !== undefined) this.lastHostCamPitch = data.pitch;
-            else if (typeof data.cam === 'object' && data.cam.pitch !== undefined) this.lastHostCamPitch = data.cam.pitch;
+          if (data.cam !== undefined || data.rngSeed !== undefined) {
+            if (data.cam !== undefined) {
+              this.lastHostCamYaw = (typeof data.cam === 'object') ? data.cam.yaw : data.cam;
+              if (data.pitch !== undefined) this.lastHostCamPitch = data.pitch;
+              else if (typeof data.cam === 'object' && data.cam.pitch !== undefined) this.lastHostCamPitch = data.cam.pitch;
+            }
             const buf = getWasmBuffer();
             if (buf && this.ramPtr !== undefined && this.ramPtr !== null && this.ramPtr >= 0) {
               try {
                 const dv = new DataView(buf, this.ramPtr, 0x200000);
-                dv.setInt32(CAM_YAW_OFFSET, this.lastHostCamYaw, true);
-                dv.setInt32(CAM_DELTA_OFFSET, 0, true);
+                if (this.lastHostCamYaw !== undefined) {
+                  dv.setInt32(CAM_YAW_OFFSET, this.lastHostCamYaw, true);
+                  dv.setInt32(CAM_DELTA_OFFSET, 0, true);
+                }
                 if (this.lastHostCamPitch !== undefined) dv.setInt32(CAM_PITCH_OFFSET, this.lastHostCamPitch, true);
+                if (data.rngSeed !== undefined) {
+                  dv.setUint32(PSX_RNG_SEED_OFFSET, data.rngSeed, true);
+                  console.log(`[Netplay Guest] Synchronized round-start PRNG seed: 0x${data.rngSeed.toString(16)}`);
+                }
               } catch (e) {}
             }
           }
