@@ -988,6 +988,41 @@
         };
       }
 
+      // Allow custom signaling server via window.TEKKEN_SIGNALING_SERVER, localStorage('tekken_signaling_server'), or ?server=...
+      let customServer = null;
+      try {
+        if (typeof window.TEKKEN_SIGNALING_SERVER === 'object' && window.TEKKEN_SIGNALING_SERVER.host) {
+          customServer = window.TEKKEN_SIGNALING_SERVER;
+        } else if (typeof localStorage !== 'undefined') {
+          const stored = localStorage.getItem('tekken_signaling_server');
+          if (stored) {
+            customServer = JSON.parse(stored);
+          }
+        }
+        if (!customServer && typeof window.location !== 'undefined' && window.location.search) {
+          const params = new URLSearchParams(window.location.search);
+          const sParam = params.get('server');
+          if (sParam) {
+            customServer = {
+              host: sParam,
+              port: 443,
+              secure: true,
+              path: '/'
+            };
+          }
+        }
+      } catch (e) {}
+
+      if (customServer && customServer.host) {
+        return {
+          ...baseOpts,
+          host: customServer.host,
+          port: customServer.port || 443,
+          path: customServer.path || '/',
+          secure: customServer.secure !== undefined ? customServer.secure : true
+        };
+      }
+
       return baseOpts;
     }
 
@@ -1183,7 +1218,8 @@
       this.updatePromptStatus('CONNECTING TO SIGNALING LOBBY...');
 
       const opts = this.getPeerOptions();
-      this.peer = new Peer(opts);
+      const guestPeerId = 'tekken3-guest-' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
+      this.peer = new Peer(guestPeerId, opts);
 
       this.peer.on('open', (id) => {
         console.log(`[Netplay Guest] Registered in lobby with ID: ${id}`);

@@ -27,6 +27,16 @@ if (typeof window === 'undefined') {
             return;
         }
 
+        // Never intercept cross-origin requests (e.g. PeerJS signaling, STUN/TURN, external APIs)
+        try {
+            const reqUrl = new URL(r.url);
+            if (reqUrl.origin !== self.location.origin) {
+                return;
+            }
+        } catch (e) {
+            return;
+        }
+
         const request = (coepCredentialless && r.mode === "no-cors")
             ? new Request(r, {
                 credentials: "omit",
@@ -54,7 +64,10 @@ if (typeof window === 'undefined') {
                         headers: newHeaders,
                     });
                 })
-                .catch((e) => console.error(e))
+                .catch((e) => {
+                    console.error('[coi-serviceworker fetch error]', e);
+                    throw e;
+                })
         );
     });
 

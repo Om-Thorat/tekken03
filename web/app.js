@@ -678,34 +678,40 @@
   window.ensureAudioKeepAlive = ensureAudioKeepAlive;
 
   // Event Listeners
-  btnStart.addEventListener('click', () => {
-    closeDrawer();
-    ensureAudioKeepAlive();
-    bootTekken();
-  });
+  if (btnStart) {
+    btnStart.addEventListener('click', () => {
+      closeDrawer();
+      ensureAudioKeepAlive();
+      bootTekken();
+    });
+  }
 
-  if (btnCustomRom) {
+  if (btnCustomRom && fileInput) {
     btnCustomRom.addEventListener('click', () => {
       fileInput.click();
     });
   }
 
-  fileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    progressBox.classList.add('active');
-    progressText.textContent = `Reading custom ROM file (${(file.size / (1024 * 1024)).toFixed(1)} MB)...`;
-    reader.onload = () => {
-      bootTekken(new Uint8Array(reader.result));
-    };
-    reader.readAsArrayBuffer(file);
-  });
+  if (fileInput) {
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      if (progressBox) progressBox.classList.add('active');
+      if (progressText) progressText.textContent = `Reading custom ROM file (${(file.size / (1024 * 1024)).toFixed(1)} MB)...`;
+      reader.onload = () => {
+        bootTekken(new Uint8Array(reader.result));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
 
-  btnCrt.addEventListener('click', () => {
-    crtOverlay.classList.toggle('enabled');
-    btnCrt.classList.toggle('active');
-  });
+  if (btnCrt && crtOverlay) {
+    btnCrt.addEventListener('click', () => {
+      crtOverlay.classList.toggle('enabled');
+      btnCrt.classList.toggle('active');
+    });
+  }
 
   if (btnFps) {
     btnFps.addEventListener('click', () => {
@@ -718,29 +724,35 @@
     });
   }
 
-  btnAspect.addEventListener('click', () => {
-    isWide = !isWide;
-    if (isWide) {
-      viewportCard.className = 'game-viewport-card viewport-aspect-16-9';
-      btnAspect.textContent = 'Aspect: 16:9';
-    } else {
-      viewportCard.className = 'game-viewport-card viewport-aspect-4-3';
-      btnAspect.textContent = 'Aspect: 4:3';
-    }
-  });
+  if (btnAspect && viewportCard) {
+    btnAspect.addEventListener('click', () => {
+      isWide = !isWide;
+      if (isWide) {
+        viewportCard.className = 'game-viewport-card viewport-aspect-16-9';
+        btnAspect.textContent = 'Aspect: 16:9';
+      } else {
+        viewportCard.className = 'game-viewport-card viewport-aspect-4-3';
+        btnAspect.textContent = 'Aspect: 4:3';
+      }
+    });
+  }
 
-  btnFullscreen.addEventListener('click', () => {
-    if (!document.fullscreenElement) {
-      viewportCard.requestFullscreen().catch(console.warn);
-    } else {
-      document.exitFullscreen().catch(console.warn);
-    }
-  });
+  if (btnFullscreen && viewportCard) {
+    btnFullscreen.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        viewportCard.requestFullscreen().catch(console.warn);
+      } else {
+        document.exitFullscreen().catch(console.warn);
+      }
+    });
+  }
 
-  volumeSlider.addEventListener('input', (e) => {
-    const val = parseFloat(e.target.value);
-    console.log('[Tekken Web] Volume set to:', val);
-  });
+  if (volumeSlider) {
+    volumeSlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      console.log('[Tekken Web] Volume set to:', val);
+    });
+  }
 
   // Gamepad Detection Loop
   function pollGamepads() {
