@@ -128,6 +128,37 @@
     15: 'RIGHT'  // D-Pad Right
   };
 
+  // Robust WebRTC ICE Servers (STUN for direct LAN/P2P + TURN for Symmetric NAT / internet firewalls)
+  const ICE_CONFIG = {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:global.stun.stunprotocol.org:3478' },
+      // PeerJS free cloud TURN relays
+      {
+        urls: [
+          'turn:eu-0.turn.peerjs.com:3478',
+          'turn:us-0.turn.peerjs.com:3478'
+        ],
+        username: 'peerjs',
+        credential: 'peerjsp'
+      },
+      // OpenRelay free public TURN relays (UDP + TCP fallback over port 443 & 80)
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp'
+        ],
+        username: 'openrelay',
+        credential: 'openrelay'
+      }
+    ],
+    iceCandidatePoolSize: 10,
+    sdpSemantics: 'unified-plan'
+  };
+
   function injectDOMKey(action, keyDef) {
     if (!keyDef) return;
     const c1 = document.getElementById('canvas');
@@ -158,6 +189,9 @@
       this.gamepadPollInterval = null;
       this.prevGamepadState = {};
       this.connected = false;
+      this.joinRetryTimer = null;
+      this.joinRetryAttempts = 0;
+      this.connWatchdog = null;
 
       // In-game Versus flow states
       this.vsPromptShown = false;
@@ -284,6 +318,9 @@
         const match = hash.match(/room=([a-zA-Z0-9_-]+)/);
         if (match && match[1]) {
           const roomCode = match[1].toUpperCase();
+          if (this.promptJoinInput) {
+            this.promptJoinInput.value = roomCode;
+          }
           this.showRoomNotice(`LINKED TO ROOM ${roomCode}: Please start game & select "VS MODE" to fight!`);
           this.joinRoom(roomCode);
         }
@@ -576,12 +613,7 @@
 
       this.peer = new Peer(peerId, {
         debug: 1,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:global.stun.stunprotocol.org:3478' }
-          ]
-        }
+        config: ICE_CONFIG
       });
 
       this.peer.on('open', () => {
@@ -596,17 +628,22 @@
         if (err.type === 'unavailable-id') {
           setTimeout(() => this.createRoom(fromPrompt), 500);
         } else {
-          this.updatePromptStatus(`ERROR: ${err.type || err.message}`);
+          this.updatePromptStatus(`LOBBY NOTICE: ${err.type || err.message}`);
         }
       });
 
       this.peer.on('connection', (conn) => {
+        if (this.conn) {
+          try { this.conn.close(); } catch (e) {}
+        }
         this.conn = conn;
         this.setupHostConnection();
       });
     }
 
     setupHostConnection() {
+      if (!this.conn) return;
+
       this.conn.on('open', () => {
         console.log('[Netplay Host] Player 2 linked!');
         this.connected = true;
@@ -620,6 +657,11 @@
         if (this.localInVsMode) {
           this.conn.send({ type: 'in_vs_mode' });
         }
+      });
+
+      this.conn.on('error', (err) => {
+        console.warn('[Netplay Host Conn Error]', err);
+        this.updatePromptStatus(`CONNECTION NOTICE: ${err.message || err.type || 'P2 link dropped'}`);
       });
 
       this.conn.on('data', (data) => {
@@ -701,39 +743,100 @@
       const hostPeerId = this.normalizePeerId(code);
       this.role = 'guest';
       this.roomId = code.toUpperCase();
+      this.joinRetryAttempts = 0;
 
-      this.updatePromptStatus('CONNECTING TO HOST...');
+      if (this.promptJoinInput) {
+        this.promptJoinInput.value = this.roomId;
+      }
+
+      this.updatePromptStatus('CONNECTING TO LOBBY...');
 
       this.peer = new Peer({
         debug: 1,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:global.stun.stunprotocol.org:3478' }
-          ]
-        }
+        config: ICE_CONFIG
       });
 
       this.peer.on('open', () => {
-        this.updatePromptStatus('LINKING WITH HOST...');
-        this.conn = this.peer.connect(hostPeerId, {
-          reliable: true // In-order, lossless SCTP delivery prevents dropped or swapped keyups
-        });
-        this.setupGuestConnection();
+        this.attemptGuestConnect(hostPeerId);
       });
 
       this.peer.on('error', (err) => {
-        console.warn('[Netplay Guest Error]', err);
-        this.updatePromptStatus(`FAILED TO CONNECT: ${err.type || err.message}`);
+        console.warn('[Netplay Guest Peer Error]', err);
+        if (err.type === 'peer-unavailable') {
+          this.retryGuestConnect(hostPeerId);
+        } else {
+          this.updatePromptStatus(`FAILED TO CONNECT: ${err.type || err.message}`);
+        }
       });
     }
 
-    setupGuestConnection() {
+    attemptGuestConnect(hostPeerId) {
+      if (!this.peer || this.peer.destroyed || this.connected) return;
+      this.updatePromptStatus(`LINKING WITH HOST (${this.roomId})...`);
+
+      if (this.connWatchdog) clearTimeout(this.connWatchdog);
+      this.connWatchdog = setTimeout(() => {
+        if (!this.connected) {
+          console.warn('[Netplay Guest] Connection attempt timed out waiting for link, retrying...');
+          this.retryGuestConnect(hostPeerId);
+        }
+      }, 8000);
+
+      try {
+        if (this.conn) {
+          try { this.conn.close(); } catch (e) {}
+        }
+        this.conn = this.peer.connect(hostPeerId, {
+          reliable: true // In-order, lossless SCTP delivery prevents dropped or swapped keyups
+        });
+        this.setupGuestConnection(hostPeerId);
+      } catch (err) {
+        console.warn('[Netplay connect error]', err);
+        this.retryGuestConnect(hostPeerId);
+      }
+    }
+
+    retryGuestConnect(hostPeerId) {
+      if (this.connected) return;
+      if (this.connWatchdog) {
+        clearTimeout(this.connWatchdog);
+        this.connWatchdog = null;
+      }
+      if (this.joinRetryAttempts < 8) {
+        this.joinRetryAttempts++;
+        this.updatePromptStatus(`WAITING FOR HOST ROOM TO BE READY... (${this.joinRetryAttempts}/8)`);
+        if (this.joinRetryTimer) clearTimeout(this.joinRetryTimer);
+        this.joinRetryTimer = setTimeout(() => {
+          this.attemptGuestConnect(hostPeerId);
+        }, 1500);
+      } else {
+        this.updatePromptStatus(`HOST ROOM NOT FOUND (${this.roomId}). VERIFY CODE AND TRY AGAIN.`);
+      }
+    }
+
+    setupGuestConnection(hostPeerId) {
+      if (!this.conn) return;
+
       this.conn.on('open', () => {
         console.log('[Netplay Guest] Connected to Host!');
+        if (this.connWatchdog) {
+          clearTimeout(this.connWatchdog);
+          this.connWatchdog = null;
+        }
+        if (this.joinRetryTimer) {
+          clearTimeout(this.joinRetryTimer);
+          this.joinRetryTimer = null;
+        }
         this.connected = true;
         this.updateHud('CHALLENGER (P2)', this.roomId);
         this.updatePromptStatus('CONNECTED TO HOST // ENTERING BATTLE...');
+
+        // Close prompt modal if open
+        if (this.promptModal && this.promptModal.open) {
+          setTimeout(() => {
+            if (this.promptModal && this.promptModal.open) this.promptModal.close();
+          }, 800);
+        }
 
         this.startPingLoop();
         this.startGamepadLoop();
@@ -743,6 +846,15 @@
           this.conn.send({ type: 'in_vs_mode' });
         } else {
           this.showRoomNotice(`LINKED TO ROOM ${this.roomId} // SELECT "VS MODE" IN GAME`);
+        }
+      });
+
+      this.conn.on('error', (err) => {
+        console.warn('[Netplay Guest Conn Error]', err);
+        if (!this.connected && this.joinRetryAttempts < 8) {
+          this.retryGuestConnect(hostPeerId);
+        } else {
+          this.updatePromptStatus(`CONNECTION NOTICE: ${err.message || err.type || 'Host link dropped'}`);
         }
       });
 
@@ -1075,6 +1187,17 @@
     cleanupNetwork() {
       if (this.pingInterval) clearInterval(this.pingInterval);
       if (this.gamepadPollInterval) clearInterval(this.gamepadPollInterval);
+
+      if (this.joinRetryTimer) {
+        clearTimeout(this.joinRetryTimer);
+        this.joinRetryTimer = null;
+      }
+      this.joinRetryAttempts = 0;
+
+      if (this.connWatchdog) {
+        clearTimeout(this.connWatchdog);
+        this.connWatchdog = null;
+      }
 
       this.releaseAllInjectedKeys();
 
